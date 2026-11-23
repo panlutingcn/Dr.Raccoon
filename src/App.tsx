@@ -238,6 +238,19 @@ export default function App() {
     });
   };
 
+  const handleApplySuggestedModules = (suggestedIds: string[]) => {
+    const validIds = Array.from(
+      new Set(
+        suggestedIds.filter((id) => allModules.some((m) => m.id === id))
+      )
+    );
+    if (validIds.length === 0) return;
+    setSelectedBySemester((prev) => ({
+      ...prev,
+      [activeSemester]: validIds,
+    }));
+  };
+
   const handleAddCustomModule = (newModule: DitModule) => {
     setCustomModules((prev) => [...prev, newModule]);
     setSelectedBySemester((prev) => ({
@@ -418,7 +431,7 @@ export default function App() {
               ) : (
                 <>
                   <LogIn className="w-3.5 h-3.5 shrink-0" />
-                  <span>Uni-Account Login</span>
+                  <span>Login</span>
                 </>
               )}
             </button>
@@ -436,10 +449,12 @@ export default function App() {
           <div className="lg:col-span-5 lg:sticky lg:top-[88px]">
             <AdvisorChat
               activeSemester={activeSemester}
+              allModules={allModules}
               selectedModuleIds={selectedModuleIds}
               completedMakeupIds={completedMakeupIds}
               customModules={customModules}
               moduleOverrides={moduleOverrides}
+              onApplySuggestedModules={handleApplySuggestedModules}
             />
           </div>
 

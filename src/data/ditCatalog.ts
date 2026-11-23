@@ -297,11 +297,33 @@ export const SEMESTER_INFOS: Record<SemesterId, SemesterInfo> = {
 export const WEEKDAYS: Weekday[] = ['Mo', 'Di', 'Mi', 'Do', 'Fr'];
 export const TIME_BLOCKS = [8, 10, 12, 14, 16] as const;
 
-export const PROMPT_STARTERS: string[] = [
+export const PROMPT_STARTER_POOL: string[] = [
   'Stelle mir einen 30-CP-Stundenplan für dieses Semester zusammen.',
   'Ich habe einen B.Sc. in BWL – welche Module & Auflagen passen?',
-  'Welches Masterprofil (DITraM, UCeDI, CIDA) empfiehlst du?',
+  'Ich komme aus der Informatik – welchen 30-CP-Plan empfiehlst du?',
+  'Welches Masterprofil (DITraM, UCeDI, CIDA) passt am besten zu mir?',
+  'Welche Module im WiSe 2026/27 sind komplett auf Englisch?',
+  'Wie funktionieren Auflagenfächer (§ 6 FPO) und die Prüfungsanmeldung?',
+  'Welche Module gelten als besonders arbeitsintensiv („Tricky Modules“)?',
+  'Was muss ich bei der Wahl von CIDA und Informatik-WP beachten?',
+  'Wann kann ich frühestens das Projektseminar (12 CP) und die Masterarbeit anmelden?',
+  'Wie kann ich die 6 CP Additive Schlüsselkompetenzen (KOMPETENZ-K1) einbringen?',
+  'Welche Kickoff-Termine stehen zum Semesterstart im WiSe 2026/27 an?',
+  'Kann ich mein Masterprofil nach der ersten Prüfung noch wechseln?',
+  'Stelle mir einen entspannten 24-CP-Plan plus 6 CP Auflagen zusammen.',
+  'Welche Module aus „Weitere Grundlagen (WP)“ eignen sich für BWLer?',
 ];
+
+export const PROMPT_STARTERS: string[] = PROMPT_STARTER_POOL.slice(0, 3);
+
+export function getRandomPromptStarters(count = 3): string[] {
+  const pool = [...PROMPT_STARTER_POOL];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, Math.min(count, pool.length));
+}
 
 export const DIT_MODULES: DitModule[] = [
   // ========================

@@ -3,7 +3,7 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import {
   DIT_MODULES,
   SEMESTER_INFOS,
@@ -17,14 +17,36 @@ const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
+function createGeminiClient(apiKey: string): GoogleGenAI {
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
+      },
     },
-  },
-});
+  });
+}
+
+function isRetryableGeminiError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return (
+    msg.includes("503") ||
+    msg.includes("502") ||
+    msg.includes("504") ||
+    msg.includes("500") ||
+    msg.includes("UNAVAILABLE") ||
+    msg.includes("DEADLINE_EXCEEDED") ||
+    msg.includes("INTERNAL") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("ETIMEDOUT") ||
+    msg.includes("fetch failed")
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface ChatRequestMessage {
   role: "user" | "assistant";
@@ -145,11 +167,13 @@ Jede deiner fachlichen Antworten MUSS klar in zwei Perspektiven gegliedert sein,
 
 CHAIN-OF-THOUGHT BEI STUNDENPLAN- & MODULKOMBI-ANFRAGEN:
 Wenn der Studierende nach einem Stundenplan, einer Modulauswahl oder „30 CP“ fragt, führe die Logik explizit Schritt für Schritt aus:
-1. **Zeitkonflikt-Prüfung:** Prüfe alle Wochentage und Zeitslots (Mo–Fr) konsequent auf Überschneidungen.
-2. **CP-Summierung & Profil-Check:** Addiere die Credit Points der gewählten Module explizit (z. B. 5 × 6 CP = 30 CP). Trenne reguläre Master-CP von Auflagenfach-CP und achte bei CIDA auf das Doppelanrechnungsverbot mit Informatik-WP.
-3. **Sprach-Check & Sprachbrücke:** Liste die Unterrichtssprachen und warne vor deutschen eCampus-Titeln bei englischsprachigen Kursen.
-4. **Strukturierte Markdown-Tabelle:** Gib den finalen Plan zwingend als saubere Markdown-Tabelle aus mit den Spalten:
+1. **Standardumfang = genau 5 Module (30 CP):** Ein regulärer Semester-Stundenplan besteht IMMER aus genau **5 konkreten Modulen** (5 × 6 CP = 30 CP), sofern der Studierende nicht ausdrücklich weniger Module, mehr Module oder zusätzliche Auflagenfächer verlangt. Schlage NIEMALS 6–11 Module gleichzeitig als Stundenplan vor! Alternative Wahlmodule nennst du ggf. kurz im Text unter den Tipps, NICHT in der finalen Stundenplan-Tabelle.
+2. **Zeitkonflikt-Prüfung:** Prüfe alle Wochentage und Zeitslots (Mo–Fr) konsequent auf Überschneidungen.
+3. **CP-Summierung & Profil-Check:** Addiere die Credit Points der 5 gewählten Module explizit (z. B. 5 × 6 CP = 30 CP). Trenne reguläre Master-CP von Auflagenfach-CP und achte bei CIDA auf das Doppelanrechnungsverbot mit Informatik-WP.
+4. **Sprach-Check & Sprachbrücke:** Liste die Unterrichtssprachen und warne vor deutschen eCampus-Titeln bei englischsprachigen Kursen.
+5. **Strukturierte Markdown-Tabelle (nur bei konkreten Stundenplan-Vorschlägen!):** Gib den finalen 5-Module-Plan als saubere Markdown-Tabelle mit genau diesen Spalten aus:
 | Code | Modul (eCampus-Hinweis) | CP | Zeiten | Sprache | Prüfungsform |
+WICHTIG: Bei reinen Überblicks- oder Vergleichsfragen ohne konkreten Stundenplanwunsch (z. B. „Welche Module sind auf Englisch?“ oder „Was sind Tricky Modules?“), verwende Aufzählungen statt einer Stundenplan-Tabelle.
 
 AKTUELLER DASHBOARD-KONTEXT DES STUDIERENDEN (${semesterInfo.shortLabel}):
 - Aktuell im Stundenplan gewählt: ${currentSelectionText}
@@ -167,6 +191,8 @@ WICHTIG ZU ZEITEN & RÄUMEN: Nenne konkrete Uhrzeiten, Räume oder Prüfungsterm
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+
+  let hydrogenQuotaCooldownUntil = 0;
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", service: "dr-raccoon-dit-advisor" });
@@ -227,41 +253,183 @@ async function startServer() {
       moduleOverrides
     );
 
-    const contents = messages.map((msg) => ({
-      role: msg.role === "assistant" ? ("model" as const) : ("user" as const),
-      parts: [{ text: msg.content }],
-    }));
+    const rawMessages = messages
+      .filter(
+        (msg) =>
+          msg &&
+          typeof msg.content === "string" &&
+          msg.content.trim().length > 0 &&
+          (msg.role === "user" || msg.role === "assistant")
+      )
+      .map((msg) => ({
+        role: msg.role === "assistant" ? ("model" as const) : ("user" as const),
+        parts: [{ text: msg.content.trim() }],
+      }));
+
+    // Ensure conversation turns passed to Gemini start with a user turn
+    const firstUserIdx = rawMessages.findIndex((m) => m.role === "user");
+    const contents =
+      firstUserIdx >= 0 ? rawMessages.slice(firstUserIdx) : [];
+
+    if (contents.length === 0) {
+      res.status(400).json({ error: "Bitte gib eine Frage für Dr. Raccoon ein." });
+      return;
+    }
 
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+    res.write(": connected\n\n");
+
+    const keepaliveTimer = setInterval(() => {
+      if (!res.writableEnded) {
+        res.write(": keepalive\n\n");
+      }
+    }, 8000);
+
+    let sawQuotaError = Date.now() < hydrogenQuotaCooldownUntil;
 
     try {
-      const stream = await ai.models.generateContentStream({
-        model: "gemini-4-hydrogen",
-        contents,
-        config: {
-          systemInstruction,
-        },
-      });
+      const ai = createGeminiClient(apiKey);
+      let streamedAnyText = false;
+      const modelsToTry: readonly ("gemini-4-hydrogen" | "gemini-3.1-flash-lite")[] =
+        sawQuotaError
+          ? ["gemini-3.1-flash-lite"]
+          : ["gemini-4-hydrogen", "gemini-3.1-flash-lite"];
+      let lastError: unknown = null;
 
-      for await (const chunk of stream) {
-        const text = chunk.text;
-        if (text) {
-          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
+        const modelName = modelsToTry[mIdx];
+        const hasFallbackModel = mIdx < modelsToTry.length - 1;
+        const maxAttempts = hasFallbackModel ? 2 : 4;
+        let shouldTryNextModel = false;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const config =
+              modelName === "gemini-3.1-flash-lite"
+                ? { systemInstruction }
+                : {
+                    systemInstruction,
+                    thinkingConfig: {
+                      thinkingLevel: ThinkingLevel.LOW,
+                    },
+                  };
+
+            const stream = await ai.models.generateContentStream({
+              model: modelName,
+              contents,
+              config,
+            });
+
+            for await (const chunk of stream) {
+              const text = chunk.text;
+              if (text) {
+                streamedAnyText = true;
+                res.write(`data: ${JSON.stringify({ text })}\n\n`);
+              }
+            }
+            lastError = null;
+            break;
+          } catch (attemptErr) {
+            lastError = attemptErr;
+            const errStatus =
+              typeof (attemptErr as { status?: unknown })?.status === "number"
+                ? (attemptErr as { status: number }).status
+                : undefined;
+            const errMsg =
+              attemptErr instanceof Error
+                ? attemptErr.message
+                : String(attemptErr ?? "");
+
+            const isQuotaError =
+              errStatus === 429 ||
+              errMsg.includes("RESOURCE_EXHAUSTED") ||
+              errMsg.includes("429");
+
+            if (isQuotaError) {
+              sawQuotaError = true;
+              if (
+                modelName === "gemini-4-hydrogen" &&
+                (errMsg.includes("PerDay") || errMsg.includes("free_tier"))
+              ) {
+                hydrogenQuotaCooldownUntil = Date.now() + 5 * 60 * 1000;
+              }
+            }
+
+            if (!streamedAnyText && isQuotaError && hasFallbackModel) {
+              console.warn(
+                `Gemini-Kontingent für ${modelName} erschöpft, wechsle auf Fallback-Modell ${modelsToTry[mIdx + 1]}.`
+              );
+              shouldTryNextModel = true;
+              break;
+            }
+
+            if (
+              !streamedAnyText &&
+              (isRetryableGeminiError(attemptErr) ||
+                errStatus === 503 ||
+                errStatus === 500 ||
+                errStatus === 502 ||
+                errStatus === 504)
+            ) {
+              if (attempt < maxAttempts) {
+                await sleep(600 * attempt);
+                continue;
+              }
+              if (hasFallbackModel) {
+                shouldTryNextModel = true;
+                break;
+              }
+            }
+            throw attemptErr;
+          }
         }
+
+        if (!shouldTryNextModel) {
+          break;
+        }
+      }
+
+      if (lastError) {
+        throw lastError;
       }
 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
     } catch (err: unknown) {
+      const errStatus =
+        typeof (err as { status?: unknown })?.status === "number"
+          ? (err as { status: number }).status
+          : undefined;
       const rawMessage =
         err instanceof Error ? err.message : "Unbekannter Serverfehler";
-      console.error("Gemini API error:", err);
+      const isQuotaError =
+        errStatus === 429 ||
+        rawMessage.includes("RESOURCE_EXHAUSTED") ||
+        rawMessage.includes("429");
+      const isUnavailableError =
+        errStatus === 503 ||
+        rawMessage.includes("503") ||
+        rawMessage.includes("UNAVAILABLE");
+
+      if (isQuotaError || isUnavailableError) {
+        console.warn(
+          `Gemini API transient/quota notice (status=${errStatus ?? "unknown"}):`,
+          rawMessage.slice(0, 240)
+        );
+      } else {
+        console.error("Gemini API error:", rawMessage);
+      }
 
       let userMessage =
         "Die KI-Studienberatung konnte gerade nicht erreicht werden. Bitte versuche es in einem Moment erneut.";
       if (
+        errStatus === 400 ||
+        errStatus === 401 ||
+        errStatus === 403 ||
         rawMessage.includes("API_KEY_INVALID") ||
         rawMessage.includes("PERMISSION_DENIED") ||
         rawMessage.includes("403") ||
@@ -269,16 +437,32 @@ async function startServer() {
       ) {
         userMessage =
           "Der hinterlegte Gemini API-Schlüssel wurde abgelehnt. Bitte überprüfe ihn im Bereich Settings > Secrets.";
+      } else if (isQuotaError) {
+        userMessage =
+          rawMessage.includes("PerDay") || rawMessage.includes("free_tier")
+            ? "Das kostenlose Tageskontingent (Free Tier) der Gemini API wurde erreicht. Du kannst im Bereich Settings > Secrets einen API-Schlüssel mit aktivierter Abrechnung auswählen, um dein Kontingent zu erhöhen, oder es später erneut versuchen."
+            : "Das aktuelle Anfrage-Kontingent wurde vorübergehend erreicht. Bitte warte kurz und sende die Frage erneut.";
+      } else if (isUnavailableError && sawQuotaError) {
+        userMessage =
+          "Das kostenlose Tageskontingent für das Hauptmodell wurde erreicht und das Ausweichmodell ist aktuell stark ausgelastet. Bitte versuche es in wenigen Sekunden erneut oder wähle unter Settings > Secrets einen API-Schlüssel mit aktivierter Abrechnung aus.";
+      } else if (isUnavailableError) {
+        userMessage =
+          "Die KI-Server sind aktuell vorübergehend stark ausgelastet. Bitte warte einen kurzen Moment und sende deine Frage erneut.";
       } else if (
-        rawMessage.includes("RESOURCE_EXHAUSTED") ||
-        rawMessage.includes("429")
+        errStatus === 404 ||
+        rawMessage.includes("NOT_FOUND") ||
+        rawMessage.includes("404")
       ) {
         userMessage =
-          "Das aktuelle Anfrage-Kontingent wurde vorübergehend erreicht. Bitte warte kurz und sende die Frage erneut.";
+          "Das konfigurierte KI-Modell wurde nicht gefunden. Bitte prüfe die Serverkonfiguration.";
       }
 
-      res.write(`data: ${JSON.stringify({ error: userMessage })}\n\n`);
-      res.end();
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: userMessage })}\n\n`);
+        res.end();
+      }
+    } finally {
+      clearInterval(keepaliveTimer);
     }
   });
 

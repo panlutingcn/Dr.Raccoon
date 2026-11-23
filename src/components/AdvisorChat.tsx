@@ -1,6 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  CalendarCheck2,
+  Check,
   GraduationCap,
   RotateCcw,
   Send,
@@ -8,7 +10,11 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { PROMPT_STARTERS, type DitModule, type SemesterId } from "../data/ditCatalog";
+import {
+  getRandomPromptStarters,
+  type DitModule,
+  type SemesterId,
+} from "../data/ditCatalog";
 
 export interface ChatMessage {
   id: string;
@@ -19,10 +25,12 @@ export interface ChatMessage {
 
 interface AdvisorChatProps {
   activeSemester: SemesterId;
+  allModules: DitModule[];
   selectedModuleIds: string[];
   completedMakeupIds: string[];
   customModules?: DitModule[];
   moduleOverrides?: Record<string, Partial<DitModule>>;
+  onApplySuggestedModules: (moduleIds: string[]) => void;
 }
 
 const MASCOT_IMAGE_URL = "/assets/aistudio/raccoon_4_d26df235.jpeg";
@@ -35,12 +43,101 @@ const INITIAL_ASSISTANT_MESSAGE: ChatMessage = {
 Alle Module, Zeiten und Prüfungen beziehen sich auf das **aktuelle Semester (WiSe 2026/27)**. Frag mich gern zu Studienaufbau (PO-2024/2025), Modulen, Auflagen oder deiner Semesterplanung!`,
 };
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findFirstModuleInLine(
+  line: string,
+  pool: DitModule[]
+): DitModule | null {
+  let bestMatch: { index: number; mod: DitModule } | null = null;
+  for (const mod of pool) {
+    if (!mod.code) continue;
+    const pattern = new RegExp(
+      `(^|[^A-Za-z0-9])${escapeRegex(mod.code)}([^A-Za-z0-9]|$)`,
+      "i"
+    );
+    const match = pattern.exec(line);
+    if (match && (bestMatch === null || match.index < bestMatch.index)) {
+      bestMatch = { index: match.index, mod };
+    }
+  }
+  return bestMatch ? bestMatch.mod : null;
+}
+
+function findMentionedModules(text: string, pool: DitModule[]): DitModule[] {
+  const found: DitModule[] = [];
+  const seen = new Set<string>();
+  for (const mod of pool) {
+    if (!mod.code || seen.has(mod.id)) continue;
+    const pattern = new RegExp(
+      `(^|[^A-Za-z0-9])${escapeRegex(mod.code)}([^A-Za-z0-9]|$)`,
+      "i"
+    );
+    if (pattern.test(text)) {
+      seen.add(mod.id);
+      found.push(mod);
+    }
+  }
+  return found;
+}
+
+function extractSuggestedModules(
+  content: string,
+  semesterModules: DitModule[]
+): DitModule[] {
+  if (!content.trim()) return [];
+
+  const lower = content.toLowerCase();
+  const hasPlanningIntent =
+    lower.includes("stundenplan") ||
+    lower.includes("semesterplan") ||
+    lower.includes("modulplan") ||
+    lower.includes("30-cp") ||
+    lower.includes("30 cp") ||
+    lower.includes("24-cp") ||
+    lower.includes("vorschlag") ||
+    lower.includes("empfehle") ||
+    lower.includes("zusammenstellung");
+
+  if (!hasPlanningIntent) return [];
+
+  const tableLines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && !/^\|[\s:|-]+\|?$/.test(line));
+
+  if (tableLines.length > 0) {
+    const fromTable: DitModule[] = [];
+    const seen = new Set<string>();
+    for (const row of tableLines) {
+      const mod = findFirstModuleInLine(row, semesterModules);
+      if (mod && !seen.has(mod.id)) {
+        seen.add(mod.id);
+        fromTable.push(mod);
+      }
+    }
+    if (fromTable.length > 0 && fromTable.length <= 6) {
+      return fromTable;
+    }
+    if (fromTable.length > 6) {
+      return [];
+    }
+  }
+
+  const fromBody = findMentionedModules(content, semesterModules);
+  return fromBody.length >= 2 && fromBody.length <= 5 ? fromBody : [];
+}
+
 export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   activeSemester,
+  allModules,
   selectedModuleIds,
   completedMakeupIds,
   customModules = [],
   moduleOverrides = {},
+  onApplySuggestedModules,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     INITIAL_ASSISTANT_MESSAGE,
@@ -48,16 +145,39 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [mascotImgFailed, setMascotImgFailed] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [proposalDecisions, setProposalDecisions] = useState<
+    Record<string, "accepted" | "dismissed">
+  >({});
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const promptStarters = useMemo(() => getRandomPromptStarters(3), []);
+
+  const semesterModules = useMemo(
+    () =>
+      allModules.filter(
+        (m) =>
+          m.semester === activeSemester ||
+          m.semester === "alle" ||
+          m.area === "Auflagen"
+      ),
+    [allModules, activeSemester]
+  );
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length <= 1) return;
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: isStreaming ? "auto" : "smooth",
+    });
   }, [messages, isStreaming]);
 
   const handleResetChat = () => {
     if (isStreaming) return;
     setMessages([INITIAL_ASSISTANT_MESSAGE]);
+    setProposalDecisions({});
     setInputValue("");
   };
 
@@ -79,7 +199,9 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
     };
 
     const conversationHistory = [
-      ...messages.filter((m) => !m.isError),
+      ...messages.filter(
+        (m) => !m.isError && m.id !== "welcome-msg" && m.content.trim().length > 0
+      ),
       userMessage,
     ];
     setMessages([...messages, userMessage, placeholderAssistant]);
@@ -124,40 +246,55 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
       let buffer = "";
       let accumulatedText = "";
 
+      const processEventChunk = (eventChunk: string) => {
+        const dataLines = eventChunk
+          .split(/\r?\n/)
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim());
+        if (dataLines.length === 0) return;
+
+        const jsonStr = dataLines.join("\n").trim();
+        if (!jsonStr) return;
+
+        const parsed = JSON.parse(jsonStr) as {
+          text?: string;
+          done?: boolean;
+          error?: string;
+        };
+
+        if (parsed.error) {
+          throw new Error(parsed.error);
+        }
+
+        if (parsed.text) {
+          accumulatedText += parsed.text;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: accumulatedText } : m
+            )
+          );
+        }
+      };
+
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          buffer += decoder.decode();
+          if (buffer.trim()) {
+            for (const chunk of buffer.split(/\r?\n\r?\n/)) {
+              if (chunk.trim()) processEventChunk(chunk);
+            }
+          }
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split("\n\n");
+        const events = buffer.split(/\r?\n\r?\n/);
         buffer = events.pop() ?? "";
 
         for (const eventChunk of events) {
-          const line = eventChunk
-            .split("\n")
-            .find((l) => l.startsWith("data: "));
-          if (!line) continue;
-
-          const jsonStr = line.slice(6).trim();
-          if (!jsonStr) continue;
-
-          const parsed = JSON.parse(jsonStr) as {
-            text?: string;
-            done?: boolean;
-            error?: string;
-          };
-
-          if (parsed.error) {
-            throw new Error(parsed.error);
-          }
-
-          if (parsed.text) {
-            accumulatedText += parsed.text;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, content: accumulatedText } : m
-              )
-            );
+          if (eventChunk.trim()) {
+            processEventChunk(eventChunk);
           }
         }
       }
@@ -238,64 +375,140 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
       </div>
 
       {/* Scrollable Chat Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-slate-50/60">
-        {messages.map((msg) => {
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-slate-50/60"
+      >
+        {messages.map((msg, index) => {
           const isUser = msg.role === "user";
+          const isFinishedAssistant =
+            !isUser &&
+            !msg.isError &&
+            msg.id !== "welcome-msg" &&
+            msg.content.trim().length > 0 &&
+            !(isStreaming && index === messages.length - 1);
+
+          const suggestedModules = isFinishedAssistant
+            ? extractSuggestedModules(msg.content, semesterModules)
+            : [];
+          const decision = proposalDecisions[msg.id];
+          const suggestedTotalCp = suggestedModules.reduce(
+            (sum, m) => sum + m.cp,
+            0
+          );
 
           return (
-            <div
-              key={msg.id}
-              className={`flex gap-2.5 ${isUser ? "justify-end" : "justify-start"}`}
-            >
-              {!isUser && (
-                <div className="w-7 h-7 rounded-lg overflow-hidden border border-teal-700/25 bg-white p-0.5 shrink-0 mt-0.5 flex items-center justify-center">
-                  {!mascotImgFailed ? (
-                    <img
-                      src={MASCOT_IMAGE_URL}
-                      alt="Dr. Raccoon Logo"
-                      referrerPolicy="no-referrer"
-                      onError={() => setMascotImgFailed(true)}
-                      className="w-full h-full object-contain"
-                    />
+            <div key={msg.id} className="space-y-2">
+              <div
+                className={`flex gap-2.5 ${isUser ? "justify-end" : "justify-start"}`}
+              >
+                {!isUser && (
+                  <div className="w-7 h-7 rounded-lg overflow-hidden border border-teal-700/25 bg-white p-0.5 shrink-0 mt-0.5 flex items-center justify-center">
+                    {!mascotImgFailed ? (
+                      <img
+                        src={MASCOT_IMAGE_URL}
+                        alt="Dr. Raccoon Logo"
+                        referrerPolicy="no-referrer"
+                        onError={() => setMascotImgFailed(true)}
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <GraduationCap className="w-4 h-4 text-teal-700" />
+                    )}
+                  </div>
+                )}
+
+                <div
+                  className={`max-w-[88%] rounded-xl px-3.5 py-2.5 ${
+                    isUser
+                      ? "bg-teal-700 text-white text-sm leading-relaxed"
+                      : msg.isError
+                      ? "bg-red-50 border border-red-200 text-red-900 text-sm"
+                      : "bg-white border border-slate-200 text-slate-800"
+                  }`}
+                >
+                  {isUser ? (
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  ) : msg.isError ? (
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                      <p>{msg.content}</p>
+                    </div>
+                  ) : msg.content ? (
+                    <div className="raccoon-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
                   ) : (
-                    <GraduationCap className="w-4 h-4 text-teal-700" />
+                    <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
+                      <Sparkles className="w-3.5 h-3.5 text-teal-700" />
+                      <span>Dr. Raccoon prüft Prüfungsordnung &amp; Zeiten…</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {suggestedModules.length > 0 && decision !== "dismissed" && (
+                <div className="pl-9.5 max-w-[92%]">
+                  {decision === "accepted" ? (
+                    <div className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-medium text-teal-900">
+                      <Check className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                      <span>
+                        Dein Stundenplan wurde mit diesem Vorschlag aktualisiert (
+                        {suggestedModules.map((m) => m.code).join(", ")}).
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-teal-700/25 bg-teal-50/70 px-3.5 py-2.5 space-y-2">
+                      <div className="flex items-start gap-2 text-xs text-slate-800">
+                        <CalendarCheck2 className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold text-teal-950">
+                            Soll dein aktueller Stundenplan durch diesen Vorschlag ersetzt werden?
+                          </p>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                            Module: {suggestedModules.map((m) => m.code).join(", ")} ({suggestedTotalCp} ECTS)
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onApplySuggestedModules(
+                              suggestedModules.map((m) => m.id)
+                            );
+                            setProposalDecisions((prev) => ({
+                              ...prev,
+                              [msg.id]: "accepted",
+                            }));
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold transition-colors"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Ja, Stundenplan aktualisieren</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setProposalDecisions((prev) => ({
+                              ...prev,
+                              [msg.id]: "dismissed",
+                            }))
+                          }
+                          className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-xs font-medium text-slate-600 transition-colors"
+                        >
+                          Nicht übernehmen
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
-
-              <div
-                className={`max-w-[88%] rounded-xl px-3.5 py-2.5 ${
-                  isUser
-                    ? "bg-teal-700 text-white text-sm leading-relaxed"
-                    : msg.isError
-                    ? "bg-red-50 border border-red-200 text-red-900 text-sm"
-                    : "bg-white border border-slate-200 text-slate-800"
-                }`}
-              >
-                {isUser ? (
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                ) : msg.isError ? (
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                    <p>{msg.content}</p>
-                  </div>
-                ) : msg.content ? (
-                  <div className="raccoon-markdown">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.content}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
-                    <Sparkles className="w-3.5 h-3.5 text-teal-700" />
-                    <span>Dr. Raccoon prüft Prüfungsordnung &amp; Zeiten…</span>
-                  </div>
-                )}
-              </div>
             </div>
           );
         })}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Prompt Starters + Input Composer */}
@@ -305,7 +518,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
             Schnellstart-Fragen
           </p>
           <div className="flex flex-col gap-1">
-            {PROMPT_STARTERS.map((starter) => (
+            {promptStarters.map((starter) => (
               <button
                 key={starter}
                 type="button"
@@ -319,31 +532,37 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
-          <div className="flex-1">
+        <form onSubmit={handleSubmit}>
+          <div
+            className={`flex flex-col rounded-lg border border-slate-300 transition-colors focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/15 ${
+              isStreaming ? "bg-slate-50" : "bg-white"
+            }`}
+          >
             <label htmlFor="advisor-chat-input" className="sr-only">
               Frage an Dr. Raccoon stellen
             </label>
             <textarea
               ref={textareaRef}
               id="advisor-chat-input"
-              rows={4}
+              rows={3}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isStreaming}
               placeholder="Frag Dr. Raccoon zu Modulen, Auflagen oder Terminen…"
-              className="w-full min-h-[108px] resize-y rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15 disabled:bg-slate-50"
+              className="w-full min-h-[84px] resize-none rounded-t-lg bg-transparent px-3 pt-2.5 pb-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
             />
+            <div className="flex items-center justify-end px-2.5 pb-2 pt-1">
+              <button
+                type="submit"
+                disabled={isStreaming || !inputValue.trim()}
+                className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium transition-colors whitespace-nowrap shrink-0 disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Senden</span>
+              </button>
+            </div>
           </div>
-          <button
-            type="submit"
-            disabled={isStreaming || !inputValue.trim()}
-            className="inline-flex items-center justify-center gap-1.5 h-[42px] px-3.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium transition-colors whitespace-nowrap shrink-0 disabled:opacity-45 disabled:cursor-not-allowed"
-          >
-            <Send className="w-4 h-4" />
-            <span>Senden</span>
-          </button>
         </form>
       </div>
     </section>
