@@ -1,0 +1,8 @@
+{
+  "name": "Dr. Raccoon – KI-Studienberater (Master DIT, Uni Kassel)",
+  "description": "Interaktiver KI-Studienberater und Semesterplaner für Erstsemester des Masterstudiengangs Digital Innovation & Transformation (DIT) an der Universität Kassel (FB 07).",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    background-color: #f8fafc;
+    color: #0f172a;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editorial Markdown styling inside Dr. Raccoon chat messages */
+.raccoon-markdown {
+  font-size: 0.925rem;
+  line-height: 1.62;
+  color: #1e293b;
+}
+
+.raccoon-markdown h3 {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f766e;
+  margin-top: 1rem;
+  margin-bottom: 0.45rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(15, 118, 110, 0.22);
+}
+
+.raccoon-markdown h3:first-child {
+  margin-top: 0;
+}
+
+.raccoon-markdown p {
+  margin-bottom: 0.6rem;
+}
+
+.raccoon-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.raccoon-markdown ul,
+.raccoon-markdown ol {
+  margin: 0.45rem 0 0.7rem 1.2rem;
+}
+
+.raccoon-markdown ul {
+  list-style-type: disc;
+}
+
+.raccoon-markdown ol {
+  list-style-type: decimal;
+}
+
+.raccoon-markdown li {
+  margin-bottom: 0.25rem;
+}
+
+.raccoon-markdown strong {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.raccoon-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  display: block;
+  overflow-x: auto;
+}
+
+.raccoon-markdown thead {
+  background-color: #f0fdfa;
+  color: #115e59;
+}
+
+.raccoon-markdown th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid rgba(15, 118, 110, 0.25);
+  white-space: nowrap;
+}
+
+.raccoon-markdown td {
+  padding: 0.45rem 0.65rem;
+  border-bottom: 1px solid #e2e8f0;
+  vertical-align: top;
+}
+
+.raccoon-markdown tr:last-child td {
+  border-bottom: none;
+}
+
+.raccoon-markdown blockquote {
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.75rem;
+  background-color: #f0fdfa;
+  border: 1px solid #ccfbf1;
+  border-radius: 0.5rem;
+  color: #134e4a;
+  font-size: 0.875rem;
+}
+
+.raccoon-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  background-color: rgba(15, 118, 110, 0.09);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  color: #0f766e;
+}
