@@ -4,7 +4,6 @@ import { AdvisorChat } from "./components/AdvisorChat";
 import { ExamsPanel } from "./components/ExamsPanel";
 import { TimetablePanel } from "./components/TimetablePanel";
 import {
-  DEFAULT_SELECTED_BY_SEMESTER,
   DIT_MODULES,
   SEMESTER_INFOS,
   type DitModule,
@@ -35,23 +34,10 @@ function readStoredStringArray(key: string, fallback: string[]): string[] {
   }
 }
 
-function readStoredBySemester(): Record<SemesterId, string[]> {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEYS.selectedModulesBySem);
-    if (!raw) return DEFAULT_SELECTED_BY_SEMESTER;
-    const parsed = JSON.parse(raw) as Partial<Record<SemesterId, unknown>>;
-    return {
-      wise2627: Array.isArray(parsed?.wise2627)
-        ? parsed.wise2627.filter((x): x is string => typeof x === "string")
-        : DEFAULT_SELECTED_BY_SEMESTER.wise2627,
-      sose27: Array.isArray(parsed?.sose27)
-        ? parsed.sose27.filter((x): x is string => typeof x === "string")
-        : DEFAULT_SELECTED_BY_SEMESTER.sose27,
-    };
-  } catch {
-    return DEFAULT_SELECTED_BY_SEMESTER;
-  }
-}
+const EMPTY_SELECTED_BY_SEMESTER: Record<SemesterId, string[]> = {
+  wise2627: [],
+  sose27: [],
+};
 
 function normalizeLegacyArea(mod: DitModule): DitModule {
   if ((mod.area as string) === "Pflichtbereich") {
@@ -120,7 +106,10 @@ export default function App() {
   });
   const [selectedBySemester, setSelectedBySemester] = useState<
     Record<SemesterId, string[]>
-  >(() => readStoredBySemester());
+  >(() => ({
+    wise2627: [...EMPTY_SELECTED_BY_SEMESTER.wise2627],
+    sose27: [...EMPTY_SELECTED_BY_SEMESTER.sose27],
+  }));
   const [completedMakeupIds, setCompletedMakeupIds] = useState<string[]>(() =>
     readStoredStringArray(STORAGE_KEYS.completedMakeup, [])
   );
@@ -142,19 +131,16 @@ export default function App() {
     document.title =
       activeTab === "timetable"
         ? "Stundenplan · Dr. Raccoon (Master DIT, Uni Kassel)"
-        : "Prüfungen · Dr. Raccoon (Master DIT, Uni Kassel)";
+        : "Prüfungsübersicht · Dr. Raccoon (Master DIT, Uni Kassel)";
   }, [activeTab]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        STORAGE_KEYS.selectedModulesBySem,
-        JSON.stringify(selectedBySemester)
-      );
+      window.localStorage.removeItem(STORAGE_KEYS.selectedModulesBySem);
     } catch {
       // ignore storage quota errors
     }
-  }, [selectedBySemester]);
+  }, []);
 
   useEffect(() => {
     try {
@@ -368,32 +354,34 @@ export default function App() {
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       {/* Top Navigation Bar (always visible on desktop, tablet & mobile) */}
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 sm:h-[72px] flex items-center justify-between">
-          <a
-            href="#top"
-            aria-label="Dr. Raccoon – Startseite"
-            className="flex items-center shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 rounded-md"
-          >
-            <img
-              src="/assets/aistudio/raccoon_4_d26df235.jpeg"
-              alt="Dr. Raccoon Logo"
-              referrerPolicy="no-referrer"
-              className="h-10 sm:h-14 w-auto object-contain"
-            />
-          </a>
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 sm:h-[72px] flex items-center justify-between lg:grid lg:grid-cols-12 lg:gap-5">
+          <div className="flex items-center shrink-0 lg:col-span-5 lg:justify-start lg:pl-[29px]">
+            <a
+              href="#top"
+              aria-label="Dr. Raccoon – Startseite"
+              className="flex items-center shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 rounded-md"
+            >
+              <img
+                src="/assets/aistudio/raccoon_4_d26df235.jpeg"
+                alt="Dr. Raccoon Logo"
+                referrerPolicy="no-referrer"
+                className="h-10 sm:h-14 w-auto object-contain"
+              />
+            </a>
+          </div>
 
           <nav
             aria-label="Hauptnavigation"
-            className="flex flex-1 items-center justify-between min-w-0"
+            className="flex flex-1 items-center justify-between min-w-0 lg:col-span-7 lg:px-[21px]"
           >
-            <div className="flex flex-1 items-center justify-evenly gap-2 sm:gap-4 px-2 text-xs sm:text-sm font-medium text-slate-600">
+            <div className="flex flex-1 items-center justify-evenly lg:contents gap-2 sm:gap-4 px-2">
               <button
                 type="button"
                 onClick={() => selectDashboardTab("timetable")}
-                className={`hover:text-teal-800 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 py-1.5 ${
+                className={`text-xs sm:text-sm hover:text-teal-800 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 py-1.5 ${
                   activeTab === "timetable"
                     ? "text-teal-800 font-semibold underline decoration-2 underline-offset-4"
-                    : ""
+                    : "text-slate-600 font-medium"
                 }`}
               >
                 Stundenplan
@@ -402,13 +390,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => selectDashboardTab("exams")}
-                className={`hover:text-teal-800 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 py-1.5 ${
+                className={`text-xs sm:text-sm hover:text-teal-800 hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0 py-1.5 ${
                   activeTab === "exams"
                     ? "text-teal-800 font-semibold underline decoration-2 underline-offset-4"
-                    : ""
+                    : "text-slate-600 font-medium"
                 }`}
               >
-                Prüfungen
+                Prüfungsübersicht
               </button>
             </div>
 
@@ -462,7 +450,9 @@ export default function App() {
           <div className="lg:col-span-7">
             <section
               ref={dashboardDetailRef}
-              aria-label={activeTab === "timetable" ? "Stundenplan" : "Prüfungen"}
+              aria-label={
+                activeTab === "timetable" ? "Stundenplan" : "Prüfungsübersicht"
+              }
               className="scroll-mt-[64px] sm:scroll-mt-[72px] min-h-[calc(100vh-104px)] bg-white border border-teal-700/25 rounded-xl overflow-hidden"
             >
               {/* Single Active View Title Header */}
@@ -476,7 +466,7 @@ export default function App() {
                   <h1 className="text-sm sm:text-base font-bold tracking-tight truncate">
                     {activeTab === "timetable"
                       ? `Stundenplan · ${semesterInfo.shortLabel}`
-                      : `Prüfungen · ${semesterInfo.shortLabel}`}
+                      : `Prüfungsübersicht · ${semesterInfo.shortLabel}`}
                   </h1>
                 </div>
 

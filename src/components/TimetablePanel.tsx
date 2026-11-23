@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   BookOpen,
   Check,
-  CheckCircle2,
   Languages,
   Pencil,
   Plus,
@@ -331,42 +330,29 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
   return (
     <div className="space-y-5">
       {/* Compact Status Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 text-xs sm:text-sm">
-        <div className="flex flex-wrap items-center gap-2.5">
-          {conflicts.length > 0 ? (
-            <span className="inline-flex items-center gap-1.5 text-red-700 font-medium">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>
-                {conflicts.length}{" "}
-                {conflicts.length === 1 ? "Konflikt" : "Konflikte"}
+      <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 text-xs sm:text-sm">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
+          {conflicts.length > 0 && (
+            <>
+              <span className="inline-flex items-center gap-1.5 text-red-700 font-medium">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>
+                  {conflicts.length}{" "}
+                  {conflicts.length === 1 ? "Konflikt" : "Konflikte"}
+                </span>
               </span>
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 text-teal-800 font-medium">
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>Konfliktfrei</span>
-            </span>
+              <span aria-hidden="true" className="text-slate-300">
+                ·
+              </span>
+            </>
           )}
 
-          <span aria-hidden="true" className="text-slate-300">
-            ·
-          </span>
-
-          <span className="text-slate-600">
-            {semesterInfo.shortLabel} (
-            {semesterInfo.isCurrent ? "Aktuelles Semester" : "Nächstes Semester"})
-          </span>
-
-          <span aria-hidden="true" className="text-slate-300">
-            ·
-          </span>
-
-          <span className="font-mono font-semibold text-teal-800 tabular-nums">
+          <span className="font-mono font-semibold text-teal-800 tabular-nums whitespace-nowrap">
             {regularCp} / 30 ECTS
           </span>
 
           {makeupCp > 0 && (
-            <span className="text-[#ff8000] font-medium tabular-nums">
+            <span className="text-[#ff8000] font-medium tabular-nums whitespace-nowrap">
               (+{makeupCp} ECTS Auflagen)
             </span>
           )}
@@ -376,7 +362,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
           type="button"
           onClick={onClearSchedule}
           disabled={selectedModuleIds.length === 0}
-          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap disabled:opacity-40"
+          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40"
         >
           <Trash2 className="w-3.5 h-3.5" />
           <span>Leeren</span>

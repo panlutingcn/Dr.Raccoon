@@ -1412,10 +1412,10 @@ export const DIT_MODULES: DitModule[] = [
   },
 ];
 
-// Default 24 CP (4 modules) in WiSe so students see immediate progress toward 30 CP; 30 CP preset adds WAHL-59 (or user choice)
+// Default empty timetable on page load / reload; users can pick modules or adopt Dr. Raccoon's 5-module (30 CP) plan
 export const DEFAULT_SELECTED_BY_SEMESTER: Record<SemesterId, string[]> = {
-  wise2627: ['bwl-p2', 'wi-p1', 'wahl-48', 'wahl-1'],
-  sose27: ['bwl-p1', 'wi-p2', 'wahl-58', 'wahl-2', 'wahl-35'],
+  wise2627: [],
+  sose27: [],
 };
 
 // Exact official Studienverlaufsplan (SVP) 30-CP 1st Semester & 2nd Semester load (conflict-free):
