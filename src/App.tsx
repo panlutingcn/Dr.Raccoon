@@ -372,9 +372,9 @@ export default function App() {
 
           <nav
             aria-label="Hauptnavigation"
-            className="flex flex-1 items-center justify-between min-w-0 lg:col-span-7 lg:px-[21px]"
+            className="flex flex-1 items-center justify-end gap-3 sm:gap-6 min-w-0 lg:col-span-7 lg:px-[21px]"
           >
-            <div className="flex flex-1 items-center justify-evenly lg:contents gap-2 sm:gap-4 px-2">
+            <div className="flex items-center gap-2.5 sm:gap-5">
               <button
                 type="button"
                 onClick={() => selectDashboardTab("timetable")}

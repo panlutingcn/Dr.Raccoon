@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import {
   SEMESTER_INFOS,
+  formatModuleScheduleSummary,
   type DitModule,
   type SemesterId,
 } from "../data/ditCatalog";
@@ -34,16 +35,7 @@ interface ExamsPanelProps {
 }
 
 function getModuleCourseTimeRoom(mod: DitModule): string {
-  if (mod.realScheduleLabel) return mod.realScheduleLabel;
-  if (mod.schedule.length > 0) {
-    return mod.schedule
-      .map(
-        (s) =>
-          `${s.day} ${String(s.startHour).padStart(2, "0")}:00–${String(s.endHour).padStart(2, "0")}:00 · ${s.room}`
-      )
-      .join(", ");
-  }
-  return "Zeit/Raum fehlt";
+  return formatModuleScheduleSummary(mod);
 }
 
 export const ExamsPanel: React.FC<ExamsPanelProps> = ({

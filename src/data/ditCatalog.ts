@@ -20,12 +20,30 @@ export type TeachingLanguage =
   | 'Deutsch'
   | 'Deutsch (EN-Literatur)';
 
+export type SessionType =
+  | 'Vorlesung'
+  | 'Übung'
+  | 'Tutorium'
+  | 'Seminar'
+  | 'Übung / Lab';
+
+export const SESSION_TYPES: Array<'Vorlesung' | 'Übung' | 'Tutorium' | 'Seminar'> = [
+  'Vorlesung',
+  'Übung',
+  'Tutorium',
+  'Seminar',
+];
+
 export interface ScheduleSlot {
+  id?: string;
   day: Weekday;
   startHour: number;
   endHour: number;
+  startTime?: string;
+  endTime?: string;
   room: string;
-  sessionType: 'Vorlesung' | 'Übung / Lab' | 'Seminar';
+  sessionType: SessionType;
+  selected?: boolean;
 }
 
 export interface DitModule {
@@ -57,6 +75,7 @@ export interface DitModule {
 export interface ScheduleConflict {
   day: Weekday;
   startHour: number;
+  timeRangeLabel: string;
   modules: DitModule[];
 }
 
@@ -1603,28 +1622,149 @@ export const SEMESTER_MILESTONES: SemesterMilestone[] = [
   },
 ];
 
-export function detectScheduleConflicts(modules: DitModule[]): ScheduleConflict[] {
-  const slotMap = new Map<string, { day: Weekday; startHour: number; modules: DitModule[] }>();
+export function formatHourToTime(hour: number): string {
+  const totalMinutes = Math.max(0, Math.min(23 * 60 + 59, Math.round(hour * 60)));
+  const hh = Math.floor(totalMinutes / 60);
+  const mm = totalMinutes % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
 
-  for (const mod of modules) {
-    for (const slot of mod.schedule) {
-      const key = `${slot.day}-${slot.startHour}`;
-      const existing = slotMap.get(key);
-      if (existing) {
-        if (!existing.modules.some((m) => m.id === mod.id)) {
-          existing.modules.push(mod);
+export function formatMinutesToTime(totalMinutes: number): string {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(totalMinutes)));
+  const hh = Math.floor(clamped / 60);
+  const mm = clamped % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+export function parseTimeToMinutes(timeStr?: string): number | null {
+  if (!timeStr) return null;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(timeStr.trim());
+  if (!match) return null;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return null;
+  }
+  return hh * 60 + mm;
+}
+
+export function minutesToDecimalHour(minutes: number): number {
+  return Math.round((minutes / 60) * 1000) / 1000;
+}
+
+export function getSlotTimeRange(
+  slot: Pick<ScheduleSlot, 'startHour' | 'endHour' | 'startTime' | 'endTime'>
+): { startStr: string; endStr: string; startMin: number; endMin: number } {
+  const parsedStart = parseTimeToMinutes(slot.startTime);
+  const parsedEnd = parseTimeToMinutes(slot.endTime);
+  const startMin =
+    parsedStart !== null ? parsedStart : Math.round(slot.startHour * 60);
+  const fallbackEnd = Math.round(slot.endHour * 60);
+  const endMin =
+    parsedEnd !== null
+      ? parsedEnd
+      : fallbackEnd > startMin
+      ? fallbackEnd
+      : startMin + 120;
+  return {
+    startStr: formatMinutesToTime(startMin),
+    endStr: formatMinutesToTime(endMin),
+    startMin,
+    endMin,
+  };
+}
+
+export function getActiveScheduleSlots(
+  mod: Pick<DitModule, 'schedule'>
+): ScheduleSlot[] {
+  return mod.schedule.filter((s) => s.selected !== false);
+}
+
+export function doSlotsOverlap(a: ScheduleSlot, b: ScheduleSlot): boolean {
+  if (a.day !== b.day) return false;
+  const rangeA = getSlotTimeRange(a);
+  const rangeB = getSlotTimeRange(b);
+  if (rangeA.endMin <= rangeA.startMin || rangeB.endMin <= rangeB.startMin) {
+    return false;
+  }
+  return rangeA.startMin < rangeB.endMin && rangeB.startMin < rangeA.endMin;
+}
+
+export function getTimetableBlockHour(slot: ScheduleSlot): number {
+  const { startMin } = getSlotTimeRange(slot);
+  const hour = Math.floor(startMin / 60);
+  return Math.floor(hour / 2) * 2;
+}
+
+export function formatModuleScheduleSummary(mod: DitModule): string {
+  if (mod.realScheduleLabel) return mod.realScheduleLabel;
+  const activeSlots = getActiveScheduleSlots(mod);
+  if (activeSlots.length > 0) {
+    return activeSlots
+      .map((s) => {
+        const { startStr, endStr } = getSlotTimeRange(s);
+        const typeSuffix =
+          activeSlots.length > 1 || s.sessionType !== 'Vorlesung'
+            ? ` (${s.sessionType})`
+            : '';
+        return `${s.day} ${startStr}–${endStr}${typeSuffix} · ${s.room}`;
+      })
+      .join('; ');
+  }
+  if (mod.schedule.length > 0) {
+    return 'Kein Termin im Stundenplan ausgewählt';
+  }
+  return 'Zeit/Raum fehlt';
+}
+
+export function detectScheduleConflicts(modules: DitModule[]): ScheduleConflict[] {
+  const entries = modules.flatMap((mod) =>
+    getActiveScheduleSlots(mod).map((slot) => ({
+      mod,
+      slot,
+      ...getSlotTimeRange(slot),
+    }))
+  );
+
+  const conflictMap = new Map<
+    string,
+    { day: Weekday; startHour: number; timeRangeLabel: string; modules: DitModule[] }
+  >();
+
+  for (let i = 0; i < entries.length; i++) {
+    const a = entries[i];
+    if (a.endMin <= a.startMin) continue;
+    for (let j = i + 1; j < entries.length; j++) {
+      const b = entries[j];
+      if (a.mod.id === b.mod.id) continue;
+      if (a.slot.day !== b.slot.day) continue;
+      if (b.endMin <= b.startMin) continue;
+
+      if (a.startMin < b.endMin && b.startMin < a.endMin) {
+        const overlapStart = Math.max(a.startMin, b.startMin);
+        const overlapEnd = Math.min(a.endMin, b.endMin);
+        const key = `${a.slot.day}-${overlapStart}-${overlapEnd}`;
+        const existing = conflictMap.get(key);
+        if (existing) {
+          if (!existing.modules.some((m) => m.id === a.mod.id)) {
+            existing.modules.push(a.mod);
+          }
+          if (!existing.modules.some((m) => m.id === b.mod.id)) {
+            existing.modules.push(b.mod);
+          }
+        } else {
+          conflictMap.set(key, {
+            day: a.slot.day,
+            startHour: minutesToDecimalHour(overlapStart),
+            timeRangeLabel: `${formatMinutesToTime(overlapStart)}–${formatMinutesToTime(overlapEnd)}`,
+            modules: [a.mod, b.mod],
+          });
         }
-      } else {
-        slotMap.set(key, {
-          day: slot.day,
-          startHour: slot.startHour,
-          modules: [mod],
-        });
       }
     }
   }
 
-  return Array.from(slotMap.values()).filter((entry) => entry.modules.length > 1);
+  return Array.from(conflictMap.values());
 }
 
 export function getLastUserExam(

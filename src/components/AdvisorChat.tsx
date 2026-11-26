@@ -187,6 +187,16 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
     });
   };
 
+  const handleNewChat = () => {
+    if (isStreaming) return;
+    setMessages([]);
+    setInputValue("");
+    setProposalDecisions({});
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  };
+
   const sendMessage = async (rawText: string) => {
     const trimmed = rawText.trim();
     if (!trimmed || isStreaming) return;
@@ -338,7 +348,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   const renderComposer = (extraRows = 3) => (
     <form onSubmit={handleSubmit}>
       <div
-        className={`flex flex-col rounded-2xl border border-slate-300 transition-colors focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/15 ${
+        className={`flex flex-col rounded-2xl border border-white/25 shadow-sm transition-colors focus-within:border-white focus-within:ring-2 focus-within:ring-white/30 ${
           isStreaming ? "bg-slate-50" : "bg-white"
         }`}
       >
@@ -375,26 +385,26 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   return (
     <section
       aria-label="Interaktiver KI-Studienberater Dr. Raccoon"
-      className="flex flex-col bg-white border border-slate-200 rounded-xl overflow-hidden h-[760px] lg:h-[calc(100vh-104px)] min-h-[620px]"
+      className="flex flex-col bg-teal-700 border border-teal-800 rounded-xl overflow-hidden h-[760px] lg:h-[calc(100vh-104px)] min-h-[620px]"
     >
       {!hasConversation ? (
         /* Gemini-inspired Clean Start Canvas */
         <div className="flex-1 flex flex-col px-3.5 sm:px-7 py-5 overflow-y-auto">
           <div className="w-full max-w-xl mx-auto my-auto space-y-5">
             {/* Hero Greeting */}
-            <div className="space-y-1.5 text-center">
-              <p className="text-[clamp(9px,2.55vw,12px)] sm:text-xs font-medium text-teal-800 whitespace-nowrap">
+            <div className="@container space-y-1.5 text-center">
+              <p className="text-[clamp(9px,3.15cqw,12px)] font-medium text-teal-100 whitespace-nowrap">
                 KI-Studienberatung · Master DIT · Universität Kassel (FB 07)
               </p>
-              <h2 className="mx-auto font-bold tracking-tight leading-[1.2] text-slate-900">
-                <span className="block whitespace-nowrap text-[clamp(18px,5.3vw,24px)] sm:text-[28px]">
+              <h2 className="mx-auto font-bold tracking-tight leading-[1.25] text-white text-[clamp(14px,5.3cqw,25px)]">
+                <span className="block whitespace-nowrap">
                   Hi, ich bin{" "}
-                  <span className="font-logo font-normal tracking-normal text-[#A3745A]">
+                  <span className="font-logo font-normal tracking-normal text-[#F8DAC5]">
                     Dr. Raccoon
                   </span>
                   .
                 </span>
-                <span className="block whitespace-nowrap text-slate-500 font-semibold mt-0.5 text-[clamp(15px,4.3vw,20px)] sm:text-[26px]">
+                <span className="block whitespace-nowrap text-teal-100 font-semibold mt-0.5">
                   Wie planen wir dieses Semester?
                 </span>
               </h2>
@@ -406,7 +416,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
             {/* Prompt Starters Below Composer (with Refresh on Right) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-slate-500">
+                <p className="pl-[15px] text-xs font-medium text-teal-50/90">
                   Schnellstart-Fragen
                 </p>
                 <button
@@ -414,7 +424,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                   onClick={handleRefreshStarters}
                   disabled={isStreaming}
                   title="Neue Schnellstart-Fragen anzeigen"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-teal-800 hover:bg-teal-50 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-teal-50 hover:text-white hover:bg-white/10 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Aktualisieren</span>
@@ -428,7 +438,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                     type="button"
                     disabled={isStreaming}
                     onClick={() => void sendMessage(starter)}
-                    className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 bg-slate-50/80 hover:bg-teal-50 hover:text-teal-900 border border-slate-200 hover:border-teal-600/45 rounded-xl transition-colors disabled:opacity-50"
+                    className="w-full text-left px-3.5 py-2 text-xs font-medium text-white bg-teal-800/55 hover:bg-teal-800/90 border border-white/20 hover:border-white/40 rounded-xl transition-colors disabled:opacity-50"
                   >
                     {starter}
                   </button>
@@ -437,7 +447,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
             </div>
 
             {/* Official Study Documents Below Prompt Starters */}
-            <div className="pt-3 border-t border-slate-100">
+            <div className="pt-3 border-t border-white/15">
               <div className="space-y-1.5">
                 {STUDY_DOCUMENTS.map((doc) => (
                   <a
@@ -445,17 +455,17 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                     href={doc.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-teal-50/60 hover:border-teal-600/45 transition-colors"
+                    className="group flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border border-white/20 bg-teal-800/45 hover:bg-teal-800/85 hover:border-white/40 transition-colors"
                   >
                     <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-800 group-hover:text-teal-900 truncate">
+                      <div className="text-xs font-semibold text-white truncate">
                         {doc.title}
                       </div>
-                      <div className="text-xs text-slate-500 truncate">
+                      <div className="text-xs text-teal-100/90 truncate">
                         {doc.meta}
                       </div>
                     </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                    <ExternalLink className="w-3.5 h-3.5 text-teal-100 group-hover:text-white shrink-0" />
                   </a>
                 ))}
               </div>
@@ -467,7 +477,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
         <>
           <div
             ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto px-4 sm:px-5 py-5 space-y-4 bg-white"
+            className="flex-1 overflow-y-auto px-4 sm:px-5 py-5 space-y-4 bg-teal-700"
           >
             {messages.map((msg, index) => {
               const isUser = msg.role === "user";
@@ -494,7 +504,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                     }`}
                   >
                     {!isUser && (
-                      <div className="w-7 h-7 rounded-lg overflow-hidden border border-slate-200 bg-white p-0.5 shrink-0 mt-0.5 flex items-center justify-center">
+                      <div className="w-7 h-7 rounded-lg overflow-hidden border border-white/30 bg-white p-0.5 shrink-0 mt-0.5 flex items-center justify-center">
                         {!mascotImgFailed ? (
                           <img
                             src={MASCOT_IMAGE_URL}
@@ -512,10 +522,10 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                     <div
                       className={`max-w-[90%] rounded-2xl px-4 py-2.5 ${
                         isUser
-                          ? "bg-teal-700 text-white text-sm leading-relaxed"
+                          ? "bg-teal-800/90 border border-white/20 text-white text-sm leading-relaxed"
                           : msg.isError
                           ? "bg-red-50 border border-red-200 text-red-900 text-sm"
-                          : "bg-slate-50/75 border border-slate-200/80 text-slate-800"
+                          : "bg-white border border-white/25 text-slate-800 shadow-xs"
                       }`}
                     >
                       {isUser ? (
@@ -554,7 +564,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                           </span>
                         </div>
                       ) : (
-                        <div className="rounded-xl border border-teal-700/25 bg-teal-50/70 px-3.5 py-2.5 space-y-2">
+                        <div className="rounded-xl border border-white/30 bg-white px-3.5 py-2.5 space-y-2 shadow-xs">
                           <div className="flex items-start gap-2 text-xs text-slate-800">
                             <CalendarCheck2 className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
                             <div>
@@ -608,21 +618,34 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
             })}
           </div>
 
-          <div className="border-t border-slate-100 bg-white px-4 py-3 shrink-0 space-y-2">
+          <div className="border-t border-white/15 bg-teal-700 px-4 py-3 shrink-0 space-y-2">
             {renderComposer(2)}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500 px-1">
-              {STUDY_DOCUMENTS.map((doc) => (
-                <a
-                  key={doc.id}
-                  href={doc.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 hover:text-teal-800 hover:underline underline-offset-2 transition-colors whitespace-nowrap"
-                >
-                  <span>{doc.title}</span>
-                  <ExternalLink className="w-3 h-3 shrink-0" />
-                </a>
-              ))}
+            <div className="flex items-center justify-between gap-2 text-xs text-teal-100 px-1">
+              <div className="flex items-center gap-x-2 min-w-0">
+                {STUDY_DOCUMENTS.map((doc) => (
+                  <a
+                    key={doc.id}
+                    href={doc.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 min-w-0 hover:text-white hover:underline underline-offset-2 transition-colors"
+                  >
+                    <span className="truncate">{doc.title}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                  </a>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleNewChat}
+                disabled={isStreaming}
+                title="Zurück zur Startansicht mit Schnellstart-Fragen"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-teal-50 hover:text-white hover:bg-white/10 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Neuer Chat</span>
+              </button>
             </div>
           </div>
         </>

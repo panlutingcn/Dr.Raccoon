@@ -14,15 +14,25 @@ import {
 import {
   AREA_FILTER_OPTIONS,
   SEMESTER_INFOS,
+  SESSION_TYPES,
   TIME_BLOCKS,
   WEEKDAYS,
   detectScheduleConflicts,
+  doSlotsOverlap,
+  formatModuleScheduleSummary,
+  getActiveScheduleSlots,
   getAreaSwatchClasses,
   getModuleColorTheme,
   getModuleIntroduction,
+  getSlotTimeRange,
+  getTimetableBlockHour,
+  minutesToDecimalHour,
+  parseTimeToMinutes,
   type DitModule,
   type ModuleArea,
+  type ScheduleSlot,
   type SemesterId,
+  type SessionType,
   type TeachingLanguage,
   type Weekday,
 } from "../data/ditCatalog";
@@ -42,6 +52,16 @@ interface TimetablePanelProps {
 
 type AreaFilter = "Alle" | ModuleArea;
 type LanguageFilter = "Alle" | "Englisch" | "Deutsch" | "Sprachbrücke";
+
+interface DetailSlotDraft {
+  id: string;
+  sessionType: SessionType;
+  day: "" | Weekday;
+  startTime: string;
+  endTime: string;
+  room: string;
+  selected: boolean;
+}
 
 const CUSTOM_AREAS: ModuleArea[] = [
   "BWL Pflicht",
@@ -63,17 +83,22 @@ const CUSTOM_LANGUAGES: TeachingLanguage[] = [
   "Deutsch (EN-Literatur)",
 ];
 
-function formatModuleTimeSummary(mod: DitModule): string {
-  if (mod.realScheduleLabel) return mod.realScheduleLabel;
-  if (mod.schedule.length > 0) {
-    return mod.schedule
-      .map(
-        (s) =>
-          `${s.day} ${String(s.startHour).padStart(2, "0")}:00–${String(s.endHour).padStart(2, "0")}:00 · ${s.room}`
-      )
-      .join(", ");
+function getSessionBadgeClass(sessionType: SessionType): string {
+  switch (sessionType) {
+    case "Übung":
+    case "Übung / Lab":
+      return "bg-teal-50 text-teal-800 border-teal-200";
+    case "Tutorium":
+      return "bg-amber-50 text-amber-800 border-amber-200";
+    case "Seminar":
+      return "bg-slate-100 text-slate-700 border-slate-200";
+    default:
+      return "bg-white/85 text-slate-600 border-slate-200";
   }
-  return "Zeit/Raum fehlt";
+}
+
+function formatModuleTimeSummary(mod: DitModule): string {
+  return formatModuleScheduleSummary(mod);
 }
 
 export const TimetablePanel: React.FC<TimetablePanelProps> = ({
@@ -101,8 +126,11 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
   const [customArea, setCustomArea] = useState<ModuleArea>("Profil DITraM");
   const [customLanguage, setCustomLanguage] =
     useState<TeachingLanguage>("Deutsch");
+  const [customSessionType, setCustomSessionType] =
+    useState<SessionType>("Vorlesung");
   const [customDay, setCustomDay] = useState<"" | Weekday>("");
-  const [customStartHour, setCustomStartHour] = useState<number>(10);
+  const [customStartTime, setCustomStartTime] = useState("10:00");
+  const [customEndTime, setCustomEndTime] = useState("12:00");
   const [customRoom, setCustomRoom] = useState("");
   const [customExamType, setCustomExamType] = useState("");
   const [customExamDateRoom, setCustomExamDateRoom] = useState("");
@@ -110,14 +138,13 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
 
   // Module detail / edit modal state
   const [detailModuleId, setDetailModuleId] = useState<string | null>(null);
-  const [detailDay, setDetailDay] = useState<"" | Weekday>("");
-  const [detailStartHour, setDetailStartHour] = useState<number>(10);
-  const [detailRoom, setDetailRoom] = useState("");
+  const [detailSlots, setDetailSlots] = useState<DetailSlotDraft[]>([]);
   const [detailExamType, setDetailExamType] = useState("");
   const [detailExamDateRoom, setDetailExamDateRoom] = useState("");
   const [detailLanguage, setDetailLanguage] =
     useState<TeachingLanguage>("Deutsch");
   const [detailDescription, setDetailDescription] = useState("");
+  const [detailError, setDetailError] = useState("");
 
   const availableModules = useMemo(
     () =>
@@ -143,48 +170,168 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
     [allModules, detailModuleId]
   );
 
+  const timetableHours = useMemo(() => {
+    const hours = new Set<number>(TIME_BLOCKS);
+    for (const mod of selectedModules) {
+      for (const slot of getActiveScheduleSlots(mod)) {
+        hours.add(getTimetableBlockHour(slot));
+      }
+    }
+    return Array.from(hours).sort((a, b) => a - b);
+  }, [selectedModules]);
+
   const openModuleDetail = (mod: DitModule) => {
     setDetailModuleId(mod.id);
-    const firstSlot = mod.schedule[0];
-    setDetailDay(firstSlot ? firstSlot.day : "");
-    setDetailStartHour(firstSlot ? firstSlot.startHour : 10);
-    setDetailRoom(firstSlot ? firstSlot.room : "");
+    setDetailError("");
+    if (mod.schedule.length > 0) {
+      setDetailSlots(
+        mod.schedule.map((slot, idx) => {
+          const range = getSlotTimeRange(slot);
+          return {
+            id: slot.id || `slot-${idx}-${Date.now()}`,
+            sessionType: slot.sessionType,
+            day: slot.day,
+            startTime: range.startStr,
+            endTime: range.endStr,
+            room: slot.room === "Raum fehlt" ? "" : slot.room,
+            selected: slot.selected !== false,
+          };
+        })
+      );
+    } else {
+      setDetailSlots([
+        {
+          id: `slot-0-${Date.now()}`,
+          sessionType: "Vorlesung",
+          day: "",
+          startTime: "10:00",
+          endTime: "12:00",
+          room: "",
+          selected: true,
+        },
+      ]);
+    }
     setDetailExamType(mod.examType);
     setDetailExamDateRoom(mod.customExamDateRoom ?? "");
     setDetailLanguage(mod.language);
     setDetailDescription(getModuleIntroduction(mod));
   };
 
+  const handleAddDetailSlot = () => {
+    setDetailError("");
+    setDetailSlots((prev) => {
+      const hasExercise = prev.some((s) => s.sessionType === "Übung");
+      const nextType: SessionType = hasExercise ? "Tutorium" : "Übung";
+      return [
+        ...prev,
+        {
+          id: `slot-${prev.length}-${Date.now()}`,
+          sessionType: nextType,
+          day: "",
+          startTime: "14:00",
+          endTime: "16:00",
+          room: "",
+          selected: true,
+        },
+      ];
+    });
+  };
+
+  const handleUpdateDetailSlot = (
+    slotId: string,
+    patch: Partial<DetailSlotDraft>
+  ) => {
+    setDetailError("");
+    setDetailSlots((prev) =>
+      prev.map((slot) => (slot.id === slotId ? { ...slot, ...patch } : slot))
+    );
+  };
+
+  const handleRemoveDetailSlot = (slotId: string) => {
+    setDetailError("");
+    setDetailSlots((prev) => {
+      if (prev.length <= 1) {
+        return prev.map((slot) =>
+          slot.id === slotId
+            ? {
+                ...slot,
+                day: "",
+                startTime: "10:00",
+                endTime: "12:00",
+                room: "",
+                selected: true,
+              }
+            : slot
+        );
+      }
+      return prev.filter((slot) => slot.id !== slotId);
+    });
+  };
+
   const handleSaveModuleDetail = (e: React.FormEvent) => {
     e.preventDefault();
     if (!detailModule) return;
 
-    const trimmedRoom = detailRoom.trim();
+    const nextSchedule: ScheduleSlot[] = [];
+    for (const draft of detailSlots) {
+      if (!draft.day) {
+        if (detailSlots.length > 1) {
+          setDetailError(
+            `Bitte wähle für „${draft.sessionType}“ einen Wochentag aus oder entferne den leeren Termin.`
+          );
+          return;
+        }
+        continue;
+      }
+      const startMin = parseTimeToMinutes(draft.startTime);
+      const endMin = parseTimeToMinutes(draft.endTime);
+      if (startMin === null || endMin === null || endMin <= startMin) {
+        setDetailError(
+          `Bitte prüfe die Uhrzeit für „${draft.sessionType} (${draft.day})“: Die Endzeit muss nach der Startzeit liegen.`
+        );
+        return;
+      }
+      nextSchedule.push({
+        id: draft.id,
+        day: draft.day,
+        startHour: minutesToDecimalHour(startMin),
+        endHour: minutesToDecimalHour(endMin),
+        startTime: draft.startTime,
+        endTime: draft.endTime,
+        room: draft.room.trim() || "Raum fehlt",
+        sessionType: draft.sessionType,
+        selected: draft.selected,
+      });
+    }
+
     const trimmedExamType =
       detailExamType.trim() || "Nach Modulhandbuch / Dozentenangabe";
     const trimmedExamDateRoom = detailExamDateRoom.trim();
     const trimmedDescription = detailDescription.trim();
 
-    const nextSchedule = detailDay
-      ? [
-          {
-            day: detailDay,
-            startHour: detailStartHour,
-            endHour: detailStartHour + 2,
-            room: trimmedRoom || "Raum fehlt",
-            sessionType:
-              detailModule.schedule[0]?.sessionType ?? ("Vorlesung" as const),
-          },
-        ]
-      : [];
+    const activeSavedSlots = nextSchedule.filter((s) => s.selected !== false);
+    const unscheduledRoom = detailSlots
+      .map((s) => s.room.trim())
+      .find((r) => Boolean(r));
 
-    const nextRealScheduleLabel = detailDay
-      ? `${detailDay} ${String(detailStartHour).padStart(2, "0")}:00–${String(
-          detailStartHour + 2
-        ).padStart(2, "0")}:00 · ${trimmedRoom || "Raum fehlt"}`
-      : trimmedRoom
-      ? `Uhrzeit fehlt · ${trimmedRoom}`
-      : detailModule.realScheduleLabel;
+    const nextRealScheduleLabel =
+      activeSavedSlots.length > 0
+        ? activeSavedSlots
+            .map((s) => {
+              const typeSuffix =
+                activeSavedSlots.length > 1 || s.sessionType !== "Vorlesung"
+                  ? ` (${s.sessionType})`
+                  : "";
+              return `${s.day} ${s.startTime}–${s.endTime}${typeSuffix} · ${s.room}`;
+            })
+            .join("; ")
+        : nextSchedule.length > 0
+        ? "Kein Termin im Stundenplan ausgewählt"
+        : unscheduledRoom
+        ? `Uhrzeit fehlt · ${unscheduledRoom}`
+        : detailModule.schedule.length > 0
+        ? undefined
+        : detailModule.realScheduleLabel;
 
     onUpdateModule(detailModule.id, {
       schedule: nextSchedule,
@@ -236,17 +383,11 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
 
   const conflicts = detectScheduleConflicts(selectedModules);
 
-  const conflictSlotKeys = new Set(
-    conflicts.map((c) => `${c.day}-${c.startHour}`)
-  );
-
   const wouldConflict = (candidate: DitModule): boolean => {
     if (selectedModuleIds.includes(candidate.id)) return false;
-    return candidate.schedule.some((slot) =>
+    return getActiveScheduleSlots(candidate).some((slot) =>
       selectedModules.some((existing) =>
-        existing.schedule.some(
-          (es) => es.day === slot.day && es.startHour === slot.startHour
-        )
+        getActiveScheduleSlots(existing).some((es) => doSlotsOverlap(slot, es))
       )
     );
   };
@@ -257,8 +398,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
     setCustomCp("6");
     setCustomArea("Profil DITraM");
     setCustomLanguage("Deutsch");
+    setCustomSessionType("Vorlesung");
     setCustomDay("");
-    setCustomStartHour(10);
+    setCustomStartTime("10:00");
+    setCustomEndTime("12:00");
     setCustomRoom("");
     setCustomExamType("");
     setCustomExamDateRoom("");
@@ -273,30 +416,46 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
       return;
     }
 
+    let schedule: ScheduleSlot[] = [];
+    let realScheduleLabel: string | undefined;
+    const trimmedRoom = customRoom.trim();
+
+    if (customDay) {
+      const startMin = parseTimeToMinutes(customStartTime);
+      const endMin = parseTimeToMinutes(customEndTime);
+      if (startMin === null || endMin === null || endMin <= startMin) {
+        setCustomFormError(
+          "Bitte prüfe Start- und Endzeit (Ende muss nach Beginn liegen)."
+        );
+        return;
+      }
+      schedule = [
+        {
+          id: `custom-slot-${Date.now()}`,
+          day: customDay,
+          startHour: minutesToDecimalHour(startMin),
+          endHour: minutesToDecimalHour(endMin),
+          startTime: customStartTime,
+          endTime: customEndTime,
+          room: trimmedRoom || "Raum fehlt",
+          sessionType: customSessionType,
+          selected: true,
+        },
+      ];
+      const typeSuffix =
+        customSessionType !== "Vorlesung" ? ` (${customSessionType})` : "";
+      realScheduleLabel = `${customDay} ${customStartTime}–${customEndTime}${typeSuffix} · ${
+        trimmedRoom || "Raum fehlt"
+      }`;
+    } else if (trimmedRoom) {
+      realScheduleLabel = `Uhrzeit fehlt · ${trimmedRoom}`;
+    }
+
     const parsedCp = Math.max(1, Math.min(30, Number(customCp) || 6));
     const trimmedCode = (customCode.trim() || "EIGEN").toUpperCase();
-    const trimmedRoom = customRoom.trim();
     const trimmedExamType =
       customExamType.trim() || "Nach Modulhandbuch / Dozentenangabe";
     const trimmedExamDateRoom = customExamDateRoom.trim();
-
-    const schedule = customDay
-      ? [
-          {
-            day: customDay,
-            startHour: customStartHour,
-            endHour: customStartHour + 2,
-            room: trimmedRoom || "Raum fehlt",
-            sessionType: "Vorlesung" as const,
-          },
-        ]
-      : [];
-
-    const realScheduleLabel = customDay
-      ? `${customDay} ${String(customStartHour).padStart(2, "0")}:00–${String(customStartHour + 2).padStart(2, "0")}:00 · ${trimmedRoom || "Raum fehlt"}`
-      : trimmedRoom
-      ? `Uhrzeit fehlt · ${trimmedRoom}`
-      : undefined;
 
     const newModule: DitModule = {
       id: `custom-${Date.now()}`,
@@ -400,70 +559,117 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {TIME_BLOCKS.map((hour) => (
+                  {timetableHours.map((hour) => (
                     <tr
                       key={hour}
                       className="border-b border-slate-200 last:border-b-0"
                     >
                       <td className="px-2.5 py-2.5 text-[11px] font-mono text-slate-500 align-top tabular-nums bg-slate-50/50">
-                        {String(hour).padStart(2, "0")}:00
+                        <div>{String(hour).padStart(2, "0")}:00</div>
+                        <div className="text-[10px] text-slate-400">
+                          bis {String(hour + 2).padStart(2, "0")}:00
+                        </div>
                       </td>
                       {WEEKDAYS.map((day) => {
                         const slotKey = `${day}-${hour}`;
-                        const isConflict = conflictSlotKeys.has(slotKey);
-                        const cellEntries = selectedModules.flatMap((mod) =>
-                          mod.schedule
-                            .filter(
-                              (s) => s.day === day && s.startHour === hour
-                            )
-                            .map((slot) => ({ mod, slot }))
+                        const cellEntries = selectedModules
+                          .flatMap((mod) =>
+                            getActiveScheduleSlots(mod)
+                              .filter(
+                                (s) =>
+                                  s.day === day &&
+                                  getTimetableBlockHour(s) === hour
+                              )
+                              .map((slot) => {
+                                const range = getSlotTimeRange(slot);
+                                const hasConflict = selectedModules.some(
+                                  (other) =>
+                                    other.id !== mod.id &&
+                                    getActiveScheduleSlots(other).some(
+                                      (otherSlot) =>
+                                        doSlotsOverlap(slot, otherSlot)
+                                    )
+                                );
+                                return { mod, slot, range, hasConflict };
+                              })
+                          )
+                          .sort((a, b) => a.range.startMin - b.range.startMin);
+
+                        const cellHasConflict = cellEntries.some(
+                          (entry) => entry.hasConflict
                         );
 
                         return (
                           <td
                             key={slotKey}
                             className={`p-1.5 border-l border-slate-200 align-top h-[62px] ${
-                              isConflict ? "bg-red-50/70" : ""
+                              cellHasConflict ? "bg-red-50/70" : ""
                             }`}
                           >
                             <div className="space-y-1">
-                              {cellEntries.map(({ mod, slot }) => {
-                                const theme = getModuleColorTheme(mod);
-                                return (
-                                  <div
-                                    key={`${mod.id}-${slot.day}-${slot.startHour}`}
-                                    className={`group rounded-md px-2 py-1.5 border text-xs transition-colors ${
-                                      isConflict
-                                        ? "bg-white border-red-300 text-red-950"
-                                        : theme.gridSlotClass
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between gap-1">
-                                      <span
-                                        className={`font-mono text-[11px] font-semibold truncate ${theme.textClass}`}
-                                      >
-                                        {mod.code}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => onToggleModule(mod.id)}
-                                        title={`${mod.title} entfernen`}
-                                        className="text-slate-400 hover:text-red-600 rounded transition-colors shrink-0"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
+                              {cellEntries.map(
+                                ({ mod, slot, range, hasConflict }, idx) => {
+                                  const theme = getModuleColorTheme(mod);
+                                  return (
+                                    <div
+                                      key={`${mod.id}-${slot.id ?? idx}-${slot.day}-${range.startStr}`}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={() => openModuleDetail(mod)}
+                                      onKeyDown={(e) => {
+                                        if (
+                                          e.key === "Enter" ||
+                                          e.key === " "
+                                        ) {
+                                          e.preventDefault();
+                                          openModuleDetail(mod);
+                                        }
+                                      }}
+                                      title={`${mod.title} (${slot.sessionType}) bearbeiten`}
+                                      className={`group rounded-md px-2 py-1.5 border text-xs cursor-pointer transition-colors ${
+                                        hasConflict
+                                          ? "bg-white border-red-300 text-red-950"
+                                          : theme.gridSlotClass
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <div className="flex items-center gap-1 min-w-0">
+                                          <span
+                                            className={`font-mono text-[11px] font-semibold truncate ${theme.textClass}`}
+                                          >
+                                            {mod.code}
+                                          </span>
+                                          <span
+                                            className={`text-[9px] font-semibold px-1 py-0.5 rounded border leading-none shrink-0 ${getSessionBadgeClass(
+                                              slot.sessionType
+                                            )}`}
+                                          >
+                                            {slot.sessionType}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onToggleModule(mod.id);
+                                          }}
+                                          title={`${mod.title} entfernen`}
+                                          className="text-slate-400 hover:text-red-600 rounded transition-colors shrink-0"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                      <div className="font-medium text-[11px] leading-snug line-clamp-1 mt-0.5">
+                                        {mod.title}
+                                      </div>
+                                      <div className="text-[10px] text-slate-600 leading-snug line-clamp-1 mt-0.5 tabular-nums">
+                                        {range.startStr}–{range.endStr} ·{" "}
+                                        {slot.room}
+                                      </div>
                                     </div>
-                                    <div className="font-medium text-[11px] leading-snug line-clamp-1">
-                                      {mod.title}
-                                    </div>
-                                    <div className="text-[10px] text-slate-600 leading-snug line-clamp-1 mt-0.5 tabular-nums">
-                                      {String(slot.startHour).padStart(2, "0")}:00–
-                                      {String(slot.endHour).padStart(2, "0")}:00 ·{" "}
-                                      {slot.room}
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                }
+                              )}
                             </div>
                           </td>
                         );
@@ -482,33 +688,47 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                 <div className="space-y-1.5">
                   {selectedModules.map((mod) => {
                     const theme = getModuleColorTheme(mod);
+                    const timeSummary = formatModuleTimeSummary(mod);
                     return (
                       <div
                         key={mod.id}
                         onClick={() => openModuleDetail(mod)}
                         className={`flex items-center justify-between gap-2 border border-slate-200 rounded-md px-2.5 py-1.5 text-slate-800 cursor-pointer transition-colors ${theme.cardBorderTopClass} ${theme.selectedCardBgClass}`}
                       >
-                        <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                          <span
-                            className={`font-mono font-semibold shrink-0 ${theme.textClass}`}
-                          >
-                            {mod.code}
-                          </span>
-                          <span className="font-medium text-slate-900">
-                            {mod.title} ({mod.cp} ECTS)
-                          </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                            <span
+                              className={`font-mono font-semibold shrink-0 ${theme.textClass}`}
+                            >
+                              {mod.code}
+                            </span>
+                            <span className="font-medium text-slate-900">
+                              {mod.title} ({mod.cp} ECTS)
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-600 truncate tabular-nums mt-0.5">
+                            {timeSummary}
+                          </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleModule(mod.id);
-                          }}
-                          title={`${mod.title} entfernen`}
-                          className="p-0.5 text-slate-400 hover:text-red-600 transition-colors shrink-0"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span
+                            title="Termine & Details bearbeiten"
+                            className="p-0.5 text-slate-400"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleModule(mod.id);
+                            }}
+                            title={`${mod.title} entfernen`}
+                            className="p-0.5 text-slate-400 hover:text-red-600 transition-colors shrink-0"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -672,7 +892,30 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                 </select>
               </div>
 
-              <div className="sm:col-span-4">
+              <div className="sm:col-span-3">
+                <label
+                  htmlFor="custom-session-type"
+                  className="block text-[11px] font-medium text-slate-700 mb-1"
+                >
+                  Terminart
+                </label>
+                <select
+                  id="custom-session-type"
+                  value={customSessionType}
+                  onChange={(e) =>
+                    setCustomSessionType(e.target.value as SessionType)
+                  }
+                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
+                >
+                  {SESSION_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-3">
                 <label
                   htmlFor="custom-day"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
@@ -687,7 +930,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   }
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 >
-                  <option value="">Keine Angabe (Zeit/Raum fehlt)</option>
+                  <option value="">Keine Angabe</option>
                   {WEEKDAYS.map((d) => (
                     <option key={d} value={d}>
                       {d}
@@ -696,30 +939,39 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                 </select>
               </div>
 
-              <div className="sm:col-span-4">
+              <div className="sm:col-span-3">
                 <label
-                  htmlFor="custom-hour"
+                  htmlFor="custom-start-time"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Uhrzeit (optional)
+                  Beginn (frei)
                 </label>
-                <select
-                  id="custom-hour"
-                  disabled={!customDay}
-                  value={customStartHour}
-                  onChange={(e) => setCustomStartHour(Number(e.target.value))}
-                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
-                >
-                  {TIME_BLOCKS.map((h) => (
-                    <option key={h} value={h}>
-                      {String(h).padStart(2, "0")}:00–
-                      {String(h + 2).padStart(2, "0")}:00 Uhr
-                    </option>
-                  ))}
-                </select>
+                <input
+                  id="custom-start-time"
+                  type="time"
+                  value={customStartTime}
+                  onChange={(e) => setCustomStartTime(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
+                />
               </div>
 
-              <div className="sm:col-span-4">
+              <div className="sm:col-span-3">
+                <label
+                  htmlFor="custom-end-time"
+                  className="block text-[11px] font-medium text-slate-700 mb-1"
+                >
+                  Ende (frei)
+                </label>
+                <input
+                  id="custom-end-time"
+                  type="time"
+                  value={customEndTime}
+                  onChange={(e) => setCustomEndTime(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-12">
                 <label
                   htmlFor="custom-room"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
@@ -1100,77 +1352,196 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
 
                   {/* Fehlende Infos hinzufügen oder ändern */}
                   <div className="space-y-3">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
-                      <Pencil className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                      <span>Fehlende Infos hinzufügen oder ändern</span>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                        <Pencil className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                        <span>Termine, Uhrzeiten &amp; Infos anpassen</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAddDetailSlot}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>Übung / Tutorium hinzufügen</span>
+                      </button>
+                    </div>
+
+                    {detailError && (
+                      <p className="text-xs font-medium text-red-700">
+                        {detailError}
+                      </p>
+                    )}
+
+                    {/* Terminliste (Vorlesung, Übung, Tutorium, Seminar mit freier Uhrzeit) */}
+                    <div className="space-y-2.5">
+                      {detailSlots.map((slot, idx) => (
+                        <div
+                          key={slot.id}
+                          className={`rounded-lg border p-3 space-y-2.5 transition-colors ${
+                            slot.selected
+                              ? "border-slate-200 bg-slate-50/70"
+                              : "border-slate-200/80 bg-slate-100/60 opacity-80"
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-mono text-slate-500">
+                                #{idx + 1}
+                              </span>
+                              <select
+                                aria-label={`Veranstaltungsart für Termin ${idx + 1}`}
+                                value={slot.sessionType}
+                                onChange={(e) =>
+                                  handleUpdateDetailSlot(slot.id, {
+                                    sessionType: e.target.value as SessionType,
+                                  })
+                                }
+                                className="px-2 py-1 text-xs font-semibold bg-white border border-slate-300 rounded-md text-slate-800 focus:border-teal-700 focus:outline-none"
+                              >
+                                {SESSION_TYPES.map((typeOption) => (
+                                  <option key={typeOption} value={typeOption}>
+                                    {typeOption}
+                                  </option>
+                                ))}
+                                {slot.sessionType === "Übung / Lab" && (
+                                  <option value="Übung / Lab">
+                                    Übung / Lab
+                                  </option>
+                                )}
+                              </select>
+                            </div>
+
+                            <div className="flex items-center gap-2.5">
+                              <label className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-700 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={slot.selected}
+                                  onChange={(e) =>
+                                    handleUpdateDetailSlot(slot.id, {
+                                      selected: e.target.checked,
+                                    })
+                                  }
+                                  className="rounded border-slate-300 text-teal-700 focus:ring-teal-700"
+                                />
+                                <span>Im Stundenplan</span>
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveDetailSlot(slot.id)}
+                                title={
+                                  detailSlots.length > 1
+                                    ? "Termin entfernen"
+                                    : "Termin zurücksetzen"
+                                }
+                                className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-12 gap-2">
+                            <div className="col-span-2 sm:col-span-3">
+                              <label
+                                htmlFor={`detail-day-${slot.id}`}
+                                className="block text-[11px] font-medium text-slate-700 mb-1"
+                              >
+                                Wochentag
+                              </label>
+                              <select
+                                id={`detail-day-${slot.id}`}
+                                value={slot.day}
+                                onChange={(e) =>
+                                  handleUpdateDetailSlot(slot.id, {
+                                    day: e.target.value as "" | Weekday,
+                                  })
+                                }
+                                className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
+                              >
+                                <option value="">Keine Angabe</option>
+                                {WEEKDAYS.map((d) => (
+                                  <option key={d} value={d}>
+                                    {d}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="col-span-1 sm:col-span-3">
+                              <label
+                                htmlFor={`detail-start-${slot.id}`}
+                                className="block text-[11px] font-medium text-slate-700 mb-1"
+                              >
+                                Beginn
+                              </label>
+                              <input
+                                id={`detail-start-${slot.id}`}
+                                type="time"
+                                value={slot.startTime}
+                                onChange={(e) =>
+                                  handleUpdateDetailSlot(slot.id, {
+                                    startTime: e.target.value,
+                                  })
+                                }
+                                className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none tabular-nums"
+                              />
+                            </div>
+
+                            <div className="col-span-1 sm:col-span-3">
+                              <label
+                                htmlFor={`detail-end-${slot.id}`}
+                                className="block text-[11px] font-medium text-slate-700 mb-1"
+                              >
+                                Ende
+                              </label>
+                              <input
+                                id={`detail-end-${slot.id}`}
+                                type="time"
+                                value={slot.endTime}
+                                onChange={(e) =>
+                                  handleUpdateDetailSlot(slot.id, {
+                                    endTime: e.target.value,
+                                  })
+                                }
+                                className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none tabular-nums"
+                              />
+                            </div>
+
+                            <div className="col-span-2 sm:col-span-3">
+                              <label
+                                htmlFor={`detail-room-${slot.id}`}
+                                className="block text-[11px] font-medium text-slate-700 mb-1"
+                              >
+                                Raum / Ort
+                              </label>
+                              <input
+                                id={`detail-room-${slot.id}`}
+                                type="text"
+                                value={slot.room}
+                                onChange={(e) =>
+                                  handleUpdateDetailSlot(slot.id, {
+                                    room: e.target.value,
+                                  })
+                                }
+                                placeholder="z. B. R 0210"
+                                className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+
+                      <p className="text-[11px] text-slate-500">
+                        Tipp: Uhrzeiten sind frei wählbar. Über „Im Stundenplan“
+                        wählst du aus, ob ein Termin (z. B. Übung oder
+                        Tutorium) im Wochenplan erscheint.
+                      </p>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                      <div className="sm:col-span-4">
-                        <label
-                          htmlFor="detail-day"
-                          className="block text-[11px] font-medium text-slate-700 mb-1"
-                        >
-                          Wochentag
-                        </label>
-                        <select
-                          id="detail-day"
-                          value={detailDay}
-                          onChange={(e) =>
-                            setDetailDay(e.target.value as "" | Weekday)
-                          }
-                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
-                        >
-                          <option value="">Keine Angabe</option>
-                          {WEEKDAYS.map((d) => (
-                            <option key={d} value={d}>
-                              {d}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-4">
-                        <label
-                          htmlFor="detail-hour"
-                          className="block text-[11px] font-medium text-slate-700 mb-1"
-                        >
-                          Uhrzeit
-                        </label>
-                        <select
-                          id="detail-hour"
-                          disabled={!detailDay}
-                          value={detailStartHour}
-                          onChange={(e) =>
-                            setDetailStartHour(Number(e.target.value))
-                          }
-                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
-                        >
-                          {TIME_BLOCKS.map((h) => (
-                            <option key={h} value={h}>
-                              {String(h).padStart(2, "0")}:00–
-                              {String(h + 2).padStart(2, "0")}:00 Uhr
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-4">
-                        <label
-                          htmlFor="detail-room"
-                          className="block text-[11px] font-medium text-slate-700 mb-1"
-                        >
-                          Raum / Ort
-                        </label>
-                        <input
-                          id="detail-room"
-                          type="text"
-                          value={detailRoom}
-                          onChange={(e) => setDetailRoom(e.target.value)}
-                          placeholder="z. B. Nora-Platiel-Str. 1 · R 0210"
-                          className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
-                        />
-                      </div>
 
                       <div className="sm:col-span-6">
                         <label
