@@ -1,12 +1,10 @@
 import { jsPDF } from "jspdf";
 import autoTable, { type RowInput } from "jspdf-autotable";
 import {
-  SEMESTER_INFOS,
   TIME_BLOCKS,
   WEEKDAYS,
   detectScheduleConflicts,
   doSlotsOverlap,
-  formatModuleScheduleSummary,
   getActiveScheduleSlots,
   getSlotTimeRange,
   getTimetableBlockHour,
@@ -14,10 +12,17 @@ import {
   type SemesterId,
 } from "../data/ditCatalog";
 import {
-  getProfileDisplayParts,
   getTargetEctsForProfile,
+  type AppLanguage,
   type UserProfile,
 } from "../types/userProfile";
+import {
+  formatLocalizedScheduleSummary,
+  getLocalizedProfileDisplayParts,
+  getTranslations,
+} from "../i18n/translations";
+
+type PdfLanguage = "de" | "en" | "fr";
 
 const TEAL_700: [number, number, number] = [15, 118, 110];
 const TEAL_800: [number, number, number] = [17, 94, 89];
@@ -32,10 +37,17 @@ const SLATE_50: [number, number, number] = [248, 250, 252];
 
 const RED_800: [number, number, number] = [153, 27, 27];
 const RED_50: [number, number, number] = [254, 242, 242];
-const RED_200: [number, number, number] = [254, 202, 202];
 
 const ORANGE_700: [number, number, number] = [194, 65, 12];
 const ORANGE_50: [number, number, number] = [255, 247, 237];
+
+function resolvePdfLanguage(language?: AppLanguage): PdfLanguage {
+  if (language === "de" || language === "fr" || language === "en") {
+    return language;
+  }
+  // Built-in jsPDF Helvetica only supports Latin glyphs; export crisp English for fa/zh
+  return "en";
+}
 
 function sanitizePdfText(input: string): string {
   return input
@@ -45,12 +57,265 @@ function sanitizePdfText(input: string): string {
     .replace(/≤/g, "<=")
     .replace(/•/g, "·")
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF\u2013\u2014\u2018\u2019\u201C\u201D\u201E\u2022\u20AC]/g, "")
+    .replace(
+      /[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF\u2013\u2014\u2018\u2019\u201C\u201D\u201E\u2022\u20AC]/g,
+      ""
+    )
     .trim();
 }
 
-function formatExportTimestamp(): string {
-  return new Intl.DateTimeFormat("de-DE", {
+const PDF_STRINGS: Record<
+  PdfLanguage,
+  {
+    footerNote: string;
+    pageOf: (page: number, total: number) => string;
+    exportedAt: (ts: string) => string;
+    profileUnset: string;
+    profileSummary: (
+      bachelor: string,
+      track: string,
+      semester: string,
+      job: string,
+      target: string
+    ) => string;
+    jobWorking: (h: number) => string;
+    jobNone: string;
+    timetableTitle: (shortLabel: string) => string;
+    subtitle: (studySemesterLabel: string) => string;
+    plannedLabel: string;
+    conflictPrefix: (count: number) => string;
+    weeklyGridHeading: string;
+    until: string;
+    conflictTag: string;
+    timetableHead: [string, string, string, string, string, string];
+    selectedModulesHeading: (count: number) => string;
+    moduleTableHead: [string, string, string, string, string, string, string];
+    timetableFilename: (slug: string) => string;
+    examsTitle: (shortLabel: string) => string;
+    progressHeading: string;
+    metrics: {
+      total: string;
+      earned: string;
+      planned: (shortLabel: string) => string;
+      remaining: string;
+    };
+    examsTableHeading: (count: number) => string;
+    examsTableHead: [string, string, string, string, string, string, string];
+    notesHeading: string;
+    noteMissing: (count: number) => string;
+    noteMakeup: string;
+    noteTip: string;
+    examsFilename: (slug: string) => string;
+    locale: string;
+  }
+> = {
+  de: {
+    footerNote:
+      "Unverbindliche Planungshilfe (Dr. Raccoon · Master DIT) – aktuelle Termine, Räume und Fristen bitte in eCampus/HISPOS prüfen.",
+    pageOf: (p, t) => `Seite ${p} von ${t}`,
+    exportedAt: (ts) => `Exportiert am ${ts} Uhr`,
+    profileUnset:
+      "Studienprofil: Noch nicht hinterlegt (Standardziel: 30 ECTS)",
+    profileSummary: (b, m, s, j, w) =>
+      `Studienprofil: Bachelor ${b} | Profil ${m} | ${s} | ${j} | Ziel: ${w}`,
+    jobWorking: (h) => `Werkstudent (${h}h/Wo.)`,
+    jobNone: "Kein Nebenjob",
+    timetableTitle: (shortLabel) => `Stundenplan · ${shortLabel}`,
+    subtitle: (studySemesterLabel) =>
+      `Master Digitale Innovation und Transformation (Universität Kassel, FB 07) · ${studySemesterLabel}`,
+    plannedLabel: "Geplant",
+    conflictPrefix: (c) => `Zeitkonflikt (${c})`,
+    weeklyGridHeading: "Wochenraster (Montag – Freitag)",
+    until: "bis",
+    conflictTag: "[KONFLIKT] ",
+    timetableHead: [
+      "Zeit",
+      "Montag",
+      "Dienstag",
+      "Mittwoch",
+      "Donnerstag",
+      "Freitag",
+    ],
+    selectedModulesHeading: (c) => `Gewählte Module im Detail (${c})`,
+    moduleTableHead: [
+      "Code",
+      "Modultitel",
+      "Bereich",
+      "ECTS",
+      "Sprache",
+      "Termine & Räume",
+      "Prüfungsform",
+    ],
+    timetableFilename: (slug) => `Stundenplan_${slug}.pdf`,
+    examsTitle: (shortLabel) => `Prüfungen · ${shortLabel}`,
+    progressHeading: "ECTS- & Studienfortschritt",
+    metrics: {
+      total: "Gesamtfortschritt",
+      earned: "Bereits gesammelt",
+      planned: (shortLabel) => `Geplant (${shortLabel})`,
+      remaining: "Noch offen",
+    },
+    examsTableHeading: (c) => `Prüfungen der gewählten Module (${c})`,
+    examsTableHead: [
+      "Code",
+      "Modul & Bereich",
+      "ECTS",
+      "Prüfungsform",
+      "Prüfungstermin & Raum",
+      "Lehrveranstaltung",
+      "Status",
+    ],
+    notesHeading: "Hinweise zur Prüfungsplanung",
+    noteMissing: (c) =>
+      `• Bei ${c} ${
+        c === 1 ? "Modul fehlt" : "Modulen fehlen"
+      } noch Prüfungstermin oder Raum – bitte die verbindlichen Termine im eCampus/HISPOS nachtragen.`,
+    noteMakeup:
+      "• Auflagen (§ 6 FPO): Prüfungsanmeldung in der Regel manuell über das Prüfungsamt; Abschluss ist vor Anmeldung der Masterarbeit erforderlich.",
+    noteTip:
+      "• Tipp: Prüfungsanmeldefristen sowie etwaige Vorleistungen (S1/S2) frühzeitig zu Semesterbeginn kontrollieren.",
+    examsFilename: (slug) => `Pruefungen_${slug}.pdf`,
+    locale: "de-DE",
+  },
+  en: {
+    footerNote:
+      "Non-binding planning aid (Dr. Raccoon · Master DIT) – please verify official schedules, rooms, and deadlines in eCampus/HISPOS.",
+    pageOf: (p, t) => `Page ${p} of ${t}`,
+    exportedAt: (ts) => `Exported on ${ts}`,
+    profileUnset: "Study Profile: Not configured yet (Default target: 30 ECTS)",
+    profileSummary: (b, m, s, j, w) =>
+      `Study Profile: Bachelor ${b} | Track ${m} | ${s} | ${j} | Target: ${w}`,
+    jobWorking: (h) => `Working student (${h}h/wk)`,
+    jobNone: "No part-time job",
+    timetableTitle: (shortLabel) => `Timetable · ${shortLabel}`,
+    subtitle: (studySemesterLabel) =>
+      `Master Digitale Innovation und Transformation (Universität Kassel, FB 07) · ${studySemesterLabel}`,
+    plannedLabel: "Planned",
+    conflictPrefix: (c) => `Time conflict (${c})`,
+    weeklyGridHeading: "Weekly Grid (Monday – Friday)",
+    until: "to",
+    conflictTag: "[CONFLICT] ",
+    timetableHead: [
+      "Time",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+    ],
+    selectedModulesHeading: (c) => `Selected Modules in Detail (${c})`,
+    moduleTableHead: [
+      "Code",
+      "Module Title",
+      "Area",
+      "ECTS",
+      "Language",
+      "Schedule & Rooms",
+      "Exam Format",
+    ],
+    timetableFilename: (slug) => `Timetable_${slug}.pdf`,
+    examsTitle: (shortLabel) => `Exams · ${shortLabel}`,
+    progressHeading: "ECTS & Study Progress",
+    metrics: {
+      total: "Overall Progress",
+      earned: "Earned",
+      planned: (shortLabel) => `Planned (${shortLabel})`,
+      remaining: "Remaining",
+    },
+    examsTableHeading: (c) => `Exams of Selected Modules (${c})`,
+    examsTableHead: [
+      "Code",
+      "Module & Area",
+      "ECTS",
+      "Exam Format",
+      "Exam Date & Room",
+      "Course Schedule",
+      "Status",
+    ],
+    notesHeading: "Exam Planning Notes",
+    noteMissing: (c) =>
+      `• ${c} ${
+        c === 1 ? "module is" : "modules are"
+      } still missing an exam date or room – please confirm official dates in eCampus/HISPOS.`,
+    noteMakeup:
+      "• Auflagen (§ 6 FPO): Registration is usually handled manually via the Prüfungsamt; completion is required before registering the Masterarbeit.",
+    noteTip:
+      "• Tip: Check exam registration deadlines and any preliminary coursework (S1/S2) early in the semester.",
+    examsFilename: (slug) => `Exams_${slug}.pdf`,
+    locale: "en-GB",
+  },
+  fr: {
+    footerNote:
+      "Aide à la planification non contractuelle (Dr. Raccoon · Master DIT) – veuillez vérifier les horaires, salles et délais dans eCampus/HISPOS.",
+    pageOf: (p, t) => `Page ${p} sur ${t}`,
+    exportedAt: (ts) => `Exporté le ${ts}`,
+    profileUnset:
+      "Profil d'études : non renseigné (objectif par défaut : 30 ECTS)",
+    profileSummary: (b, m, s, j, w) =>
+      `Profil : Bachelor ${b} | Profil ${m} | ${s} | ${j} | Objectif : ${w}`,
+    jobWorking: (h) => `Werkstudent (${h}h/sem.)`,
+    jobNone: "Sans emploi",
+    timetableTitle: (shortLabel) => `Emploi du temps · ${shortLabel}`,
+    subtitle: (studySemesterLabel) =>
+      `Master Digitale Innovation und Transformation (Universität Kassel, FB 07) · ${studySemesterLabel}`,
+    plannedLabel: "Planifiés",
+    conflictPrefix: (c) => `Conflit horaire (${c})`,
+    weeklyGridHeading: "Grille hebdomadaire (Lundi – Vendredi)",
+    until: "à",
+    conflictTag: "[CONFLIT] ",
+    timetableHead: [
+      "Heure",
+      "Lundi",
+      "Mardi",
+      "Mercredi",
+      "Jeudi",
+      "Vendredi",
+    ],
+    selectedModulesHeading: (c) => `Détail des modules sélectionnés (${c})`,
+    moduleTableHead: [
+      "Code",
+      "Intitulé du module",
+      "Domaine",
+      "ECTS",
+      "Langue",
+      "Horaires & Salles",
+      "Format d'examen",
+    ],
+    timetableFilename: (slug) => `Emploi_du_temps_${slug}.pdf`,
+    examsTitle: (shortLabel) => `Examens · ${shortLabel}`,
+    progressHeading: "Progression ECTS & d'études",
+    metrics: {
+      total: "Progression totale",
+      earned: "Acquis",
+      planned: (shortLabel) => `Planifiés (${shortLabel})`,
+      remaining: "Restants",
+    },
+    examsTableHeading: (c) => `Examens des modules sélectionnés (${c})`,
+    examsTableHead: [
+      "Code",
+      "Module & Domaine",
+      "ECTS",
+      "Format d'examen",
+      "Date & Salle",
+      "Cours",
+      "Statut",
+    ],
+    notesHeading: "Remarques sur les examens",
+    noteMissing: (c) =>
+      `• ${c} ${
+        c === 1 ? "module n'a pas encore" : "modules n'ont pas encore"
+      } de date ou de salle d'examen – veuillez vérifier dans eCampus/HISPOS.`,
+    noteMakeup:
+      "• Auflagen (§ 6 FPO) : inscription généralement manuelle via le Prüfungsamt ; validation requise avant l'inscription au Masterarbeit.",
+    noteTip:
+      "• Conseil : vérifiez tôt les délais d'inscription aux examens et les prérequis (S1/S2).",
+    examsFilename: (slug) => `Examens_${slug}.pdf`,
+    locale: "fr-FR",
+  },
+};
+
+function formatExportTimestamp(locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -59,16 +324,26 @@ function formatExportTimestamp(): string {
   }).format(new Date());
 }
 
-function formatProfileLine(userProfile: UserProfile | null): string {
+function formatProfileLine(
+  userProfile: UserProfile | null,
+  pdfLang: PdfLanguage
+): string {
+  const s = PDF_STRINGS[pdfLang];
   if (!userProfile) {
-    return "Studienprofil: Noch nicht hinterlegt (Standardziel: 30 ECTS)";
+    return s.profileUnset;
   }
-  const parts = getProfileDisplayParts(userProfile);
+  const parts = getLocalizedProfileDisplayParts(userProfile, pdfLang);
   const jobText = userProfile.hasPartTimeJob
-    ? `Werkstudent (${userProfile.jobHoursPerWeek}h/Wo.)`
-    : "Kein Nebenjob";
+    ? s.jobWorking(userProfile.jobHoursPerWeek)
+    : s.jobNone;
   return sanitizePdfText(
-    `Studienprofil: Bachelor ${parts.bachelorOpt.chipLabel} | Profil ${parts.masterOpt.shortLabel} | ${parts.semesterOpt.label} | ${jobText} | Ziel: ${parts.workloadOpt.chipLabel}`
+    s.profileSummary(
+      parts.bachelorOpt.chipLabel,
+      parts.masterOpt.shortLabel,
+      parts.semesterOpt.label,
+      jobText,
+      parts.workloadOpt.chipLabel
+    )
   );
 }
 
@@ -76,7 +351,8 @@ function getSemesterFileSlug(semesterId: SemesterId): string {
   return semesterId === "wise2627" ? "WiSe_2026-27" : "SoSe_2027";
 }
 
-function addDocumentFooters(doc: jsPDF): void {
+function addDocumentFooters(doc: jsPDF, pdfLang: PdfLanguage): void {
+  const s = PDF_STRINGS[pdfLang];
   const totalPages = doc.getNumberOfPages();
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -91,13 +367,9 @@ function addDocumentFooters(doc: jsPDF): void {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(...SLATE_500);
+    doc.text(sanitizePdfText(s.footerNote), margin, pageHeight - 7.5);
     doc.text(
-      "Unverbindliche Planungshilfe (Dr. Raccoon · Master DIT) – aktuelle Termine, Räume und Fristen bitte in eCampus/HISPOS prüfen.",
-      margin,
-      pageHeight - 7.5
-    );
-    doc.text(
-      `Seite ${page} von ${totalPages}`,
+      sanitizePdfText(s.pageOf(page, totalPages)),
       pageWidth - margin,
       pageHeight - 7.5,
       { align: "right" }
@@ -109,14 +381,21 @@ export interface ExportTimetablePdfParams {
   activeSemester: SemesterId;
   selectedModules: DitModule[];
   userProfile: UserProfile | null;
+  language?: AppLanguage;
 }
 
 export function exportTimetablePdf({
   activeSemester,
   selectedModules,
   userProfile,
+  language,
 }: ExportTimetablePdfParams): void {
   if (selectedModules.length === 0) return;
+
+  const pdfLang = resolvePdfLanguage(language ?? userProfile?.language);
+  const s = PDF_STRINGS[pdfLang];
+  const tr = getTranslations(pdfLang);
+  const semesterInfo = tr.catalog.semesters[activeSemester];
 
   const doc = new jsPDF({
     orientation: "landscape",
@@ -124,10 +403,9 @@ export function exportTimetablePdf({
     format: "a4",
   });
 
-  const pageWidth = doc.internal.pageSize.getWidth(); // 297
+  const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 14;
-  const contentWidth = pageWidth - margin * 2; // 269
-  const semesterInfo = SEMESTER_INFOS[activeSemester];
+  const contentWidth = pageWidth - margin * 2;
   const targetEcts = getTargetEctsForProfile(userProfile);
 
   const regularCp = selectedModules
@@ -146,7 +424,7 @@ export function exportTimetablePdf({
   doc.setFontSize(16);
   doc.setTextColor(...TEAL_800);
   doc.text(
-    sanitizePdfText(`Stundenplan · ${semesterInfo.shortLabel}`),
+    sanitizePdfText(s.timetableTitle(semesterInfo.shortLabel)),
     margin + 6,
     17
   );
@@ -155,9 +433,7 @@ export function exportTimetablePdf({
   doc.setFontSize(9.5);
   doc.setTextColor(...SLATE_700);
   doc.text(
-    sanitizePdfText(
-      `Master Digitale Innovation und Transformation (Universität Kassel, FB 07) · ${semesterInfo.studySemesterLabel}`
-    ),
+    sanitizePdfText(s.subtitle(semesterInfo.studySemesterLabel)),
     margin + 6,
     22.5
   );
@@ -165,7 +441,7 @@ export function exportTimetablePdf({
   doc.setFontSize(8.5);
   doc.setTextColor(...SLATE_500);
   doc.text(
-    `Exportiert am ${formatExportTimestamp()} Uhr`,
+    sanitizePdfText(s.exportedAt(formatExportTimestamp(s.locale))),
     pageWidth - margin,
     17,
     { align: "right" }
@@ -179,11 +455,13 @@ export function exportTimetablePdf({
   doc.setLineWidth(0.3);
   doc.roundedRect(margin, cursorY, contentWidth, summaryBoxHeight, 2, 2, "FD");
 
-  const ectsSummary = `Geplant: ${regularCp} / ${targetEcts} ECTS${
+  const moduleNoun =
+    selectedModules.length === 1
+      ? tr.exams.moduleSingular
+      : tr.exams.modulePlural;
+  const ectsSummary = `${s.plannedLabel}: ${regularCp} / ${targetEcts} ECTS${
     makeupCp > 0 ? ` (+${makeupCp} ECTS Auflagen)` : ""
-  } · ${selectedModules.length} ${
-    selectedModules.length === 1 ? "Modul" : "Module"
-  }`;
+  } · ${selectedModules.length} ${moduleNoun}`;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.setTextColor(...SLATE_900);
@@ -192,13 +470,13 @@ export function exportTimetablePdf({
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(...SLATE_700);
-  doc.text(formatProfileLine(userProfile), margin + 3.5, cursorY + 10);
+  doc.text(formatProfileLine(userProfile, pdfLang), margin + 3.5, cursorY + 10);
 
   if (conflicts.length > 0) {
     const conflictSummary = conflicts
       .map(
         (c) =>
-          `${c.day} ${c.timeRangeLabel} (${c.modules
+          `${tr.catalog.weekdays[c.day]} ${c.timeRangeLabel} (${c.modules
             .map((m) => m.code)
             .join(" / ")})`
       )
@@ -208,7 +486,7 @@ export function exportTimetablePdf({
     doc.setTextColor(...RED_800);
     doc.text(
       sanitizePdfText(
-        `Zeitkonflikt (${conflicts.length}): ${conflictSummary}`
+        `${s.conflictPrefix(conflicts.length)}: ${conflictSummary}`
       ),
       margin + 3.5,
       cursorY + 15
@@ -221,7 +499,7 @@ export function exportTimetablePdf({
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.5);
   doc.setTextColor(...TEAL_800);
-  doc.text("Wochenraster (Montag – Freitag)", margin, cursorY);
+  doc.text(sanitizePdfText(s.weeklyGridHeading), margin, cursorY);
   cursorY += 2.5;
 
   const hoursSet = new Set<number>(TIME_BLOCKS);
@@ -234,7 +512,7 @@ export function exportTimetablePdf({
 
   const conflictCellMap = new Map<string, boolean>();
   const timetableBody: RowInput[] = timetableHours.map((hour, rowIndex) => {
-    const timeLabel = `${String(hour).padStart(2, "0")}:00\nbis ${String(
+    const timeLabel = `${String(hour).padStart(2, "0")}:00\n${s.until} ${String(
       hour + 2
     ).padStart(2, "0")}:00`;
 
@@ -242,9 +520,7 @@ export function exportTimetablePdf({
       const cellEntries = selectedModules
         .flatMap((mod) =>
           getActiveScheduleSlots(mod)
-            .filter(
-              (s) => s.day === day && getTimetableBlockHour(s) === hour
-            )
+            .filter((sl) => sl.day === day && getTimetableBlockHour(sl) === hour)
             .map((slot) => {
               const range = getSlotTimeRange(slot);
               const hasConflict = selectedModules.some(
@@ -267,9 +543,13 @@ export function exportTimetablePdf({
 
       return cellEntries
         .map(({ mod, slot, range, hasConflict }) => {
-          const prefix = hasConflict ? "[KONFLIKT] " : "";
+          const prefix = hasConflict ? s.conflictTag : "";
+          const typeLabel =
+            tr.catalog.sessionTypes[slot.sessionType] ?? slot.sessionType;
+          const roomLabel =
+            slot.room === "Raum fehlt" ? tr.catalog.noRoom : slot.room;
           return sanitizePdfText(
-            `${prefix}${mod.code} (${slot.sessionType})\n${mod.title}\n${range.startStr}–${range.endStr} · ${slot.room}`
+            `${prefix}${mod.code} (${typeLabel})\n${mod.title}\n${range.startStr}–${range.endStr} · ${roomLabel}`
           );
         })
         .join("\n\n");
@@ -281,7 +561,7 @@ export function exportTimetablePdf({
   autoTable(doc, {
     startY: cursorY,
     margin: { left: margin, right: margin, bottom: 16 },
-    head: [["Zeit", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag"]],
+    head: [s.timetableHead],
     body: timetableBody,
     theme: "grid",
     styles: {
@@ -324,7 +604,6 @@ export function exportTimetablePdf({
     },
   });
 
-  // Detailed Module List (including modules without weekly slots)
   const lastTableY =
     (doc as jsPDF & { lastAutoTable?: { finalY?: number } }).lastAutoTable
       ?.finalY ?? cursorY + 40;
@@ -339,7 +618,7 @@ export function exportTimetablePdf({
   doc.setFontSize(10.5);
   doc.setTextColor(...TEAL_800);
   doc.text(
-    `Gewählte Module im Detail (${selectedModules.length})`,
+    sanitizePdfText(s.selectedModulesHeading(selectedModules.length)),
     margin,
     listStartY
   );
@@ -347,10 +626,10 @@ export function exportTimetablePdf({
   const moduleRows: RowInput[] = selectedModules.map((mod) => [
     sanitizePdfText(mod.code),
     sanitizePdfText(mod.title),
-    sanitizePdfText(mod.area),
+    sanitizePdfText(tr.catalog.areas[mod.area]),
     `${mod.cp} ECTS`,
-    sanitizePdfText(mod.language),
-    sanitizePdfText(formatModuleScheduleSummary(mod)),
+    sanitizePdfText(tr.catalog.teachingLanguages[mod.language] ?? mod.language),
+    sanitizePdfText(formatLocalizedScheduleSummary(mod, pdfLang)),
     sanitizePdfText(mod.examType),
   ]);
 
@@ -358,17 +637,7 @@ export function exportTimetablePdf({
     startY: listStartY + 2.5,
     margin: { left: margin, right: margin, bottom: 16 },
     showHead: "everyPage",
-    head: [
-      [
-        "Code",
-        "Modultitel",
-        "Bereich",
-        "ECTS",
-        "Sprache",
-        "Termine & Räume",
-        "Prüfungsform",
-      ],
-    ],
+    head: [s.moduleTableHead],
     body: moduleRows,
     theme: "grid",
     styles: {
@@ -400,8 +669,8 @@ export function exportTimetablePdf({
     },
   });
 
-  addDocumentFooters(doc);
-  doc.save(`Stundenplan_${getSemesterFileSlug(activeSemester)}.pdf`);
+  addDocumentFooters(doc, pdfLang);
+  doc.save(s.timetableFilename(getSemesterFileSlug(activeSemester)));
 }
 
 export interface ExportExamsPdfParams {
@@ -413,6 +682,7 @@ export interface ExportExamsPdfParams {
   totalMasterCp: number;
   targetSemesterEcts: number;
   userProfile: UserProfile | null;
+  language?: AppLanguage;
 }
 
 export function exportExamsPdf({
@@ -424,8 +694,14 @@ export function exportExamsPdf({
   totalMasterCp,
   targetSemesterEcts,
   userProfile,
+  language,
 }: ExportExamsPdfParams): void {
   if (selectedModules.length === 0) return;
+
+  const pdfLang = resolvePdfLanguage(language ?? userProfile?.language);
+  const s = PDF_STRINGS[pdfLang];
+  const tr = getTranslations(pdfLang);
+  const semesterInfo = tr.catalog.semesters[activeSemester];
 
   const doc = new jsPDF({
     orientation: "portrait",
@@ -433,10 +709,9 @@ export function exportExamsPdf({
     format: "a4",
   });
 
-  const pageWidth = doc.internal.pageSize.getWidth(); // 210
+  const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 14;
-  const contentWidth = pageWidth - margin * 2; // 182
-  const semesterInfo = SEMESTER_INFOS[activeSemester];
+  const contentWidth = pageWidth - margin * 2;
 
   const masterProgressPct = Math.min(
     100,
@@ -456,7 +731,7 @@ export function exportExamsPdf({
   doc.setFontSize(16);
   doc.setTextColor(...TEAL_800);
   doc.text(
-    sanitizePdfText(`Prüfungsübersicht · ${semesterInfo.shortLabel}`),
+    sanitizePdfText(s.examsTitle(semesterInfo.shortLabel)),
     margin + 6,
     17
   );
@@ -465,9 +740,7 @@ export function exportExamsPdf({
   doc.setFontSize(9);
   doc.setTextColor(...SLATE_700);
   doc.text(
-    sanitizePdfText(
-      `Master Digitale Innovation und Transformation (Universität Kassel, FB 07) · ${semesterInfo.studySemesterLabel}`
-    ),
+    sanitizePdfText(s.subtitle(semesterInfo.studySemesterLabel)),
     margin + 6,
     22.5
   );
@@ -475,7 +748,7 @@ export function exportExamsPdf({
   doc.setFontSize(8);
   doc.setTextColor(...SLATE_500);
   doc.text(
-    `Exportiert am ${formatExportTimestamp()} Uhr`,
+    sanitizePdfText(s.exportedAt(formatExportTimestamp(s.locale))),
     pageWidth - margin,
     17,
     { align: "right" }
@@ -490,7 +763,11 @@ export function exportExamsPdf({
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(...SLATE_700);
-  doc.text(formatProfileLine(userProfile), margin + 3, cursorY + 5.5);
+  doc.text(
+    formatProfileLine(userProfile, pdfLang),
+    margin + 3,
+    cursorY + 5.5
+  );
 
   cursorY += 12.5;
 
@@ -498,7 +775,7 @@ export function exportExamsPdf({
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.5);
   doc.setTextColor(...TEAL_800);
-  doc.text("ECTS- & Studienfortschritt", margin, cursorY);
+  doc.text(sanitizePdfText(s.progressHeading), margin, cursorY);
   cursorY += 3;
 
   const cardGap = 3;
@@ -511,20 +788,20 @@ export function exportExamsPdf({
     highlight?: boolean;
   }> = [
     {
-      label: "Gesamtfortschritt",
+      label: s.metrics.total,
       value: `${totalMasterCp} / 120 ECTS (${masterProgressPct}%)`,
     },
     {
-      label: "Bereits gesammelt",
+      label: s.metrics.earned,
       value: `${wiseCompletedCp} ECTS`,
     },
     {
-      label: `Geplant (${semesterInfo.shortLabel})`,
+      label: s.metrics.planned(semesterInfo.shortLabel),
       value: `${currentSemesterRegularCp} / ${targetSemesterEcts} ECTS (${semesterProgressPct}%)`,
       highlight: true,
     },
     {
-      label: "Noch offen",
+      label: s.metrics.remaining,
       value: `${openMasterCp} ECTS`,
     },
   ];
@@ -559,7 +836,7 @@ export function exportExamsPdf({
   doc.setFontSize(10.5);
   doc.setTextColor(...TEAL_800);
   doc.text(
-    `Prüfungen der gewählten Module (${selectedModules.length})`,
+    sanitizePdfText(s.examsTableHeading(selectedModules.length)),
     margin,
     cursorY
   );
@@ -577,17 +854,22 @@ export function exportExamsPdf({
       checkboxRows.add(idx);
     }
 
-    const examDateRoom = mod.customExamDateRoom?.trim() || "Zeit/Raum fehlt";
-    const courseTimeRoom = formatModuleScheduleSummary(mod);
+    const examDateRoom =
+      mod.customExamDateRoom?.trim() || tr.exams.missingDateRoom;
+    const courseTimeRoom = formatLocalizedScheduleSummary(mod, pdfLang);
 
     return [
       sanitizePdfText(mod.code),
-      sanitizePdfText(`${mod.title}\n(${mod.area})`),
+      sanitizePdfText(`${mod.title}\n(${tr.catalog.areas[mod.area]})`),
       `${mod.cp}`,
       sanitizePdfText(mod.examType),
       sanitizePdfText(examDateRoom),
       sanitizePdfText(courseTimeRoom),
-      isMakeup ? (isDone ? "Bestanden" : "Offen") : "",
+      isMakeup
+        ? isDone
+          ? tr.exams.makeupDone
+          : tr.exams.makeupOpen
+        : "",
     ];
   });
 
@@ -595,17 +877,7 @@ export function exportExamsPdf({
     startY: cursorY,
     margin: { left: margin, right: margin, bottom: 16 },
     showHead: "everyPage",
-    head: [
-      [
-        "Code",
-        "Modul & Bereich",
-        "ECTS",
-        "Prüfungsform",
-        "Prüfungstermin & Raum",
-        "Lehrveranstaltung",
-        "Status",
-      ],
-    ],
+    head: [s.examsTableHead],
     body: examRows,
     theme: "grid",
     styles: {
@@ -651,7 +923,7 @@ export function exportExamsPdf({
       }
       if (data.section === "body" && data.column.index === 4) {
         const text = String(data.cell.raw ?? "");
-        if (text === "Zeit/Raum fehlt") {
+        if (text === tr.exams.missingDateRoom) {
           data.cell.styles.textColor = SLATE_500;
         }
       }
@@ -664,7 +936,8 @@ export function exportExamsPdf({
       ) {
         const boxSize = 3.2;
         const boxX = data.cell.x + (data.cell.width - boxSize) / 2;
-        const boxY = data.cell.y + Math.min(4.2, (data.cell.height - boxSize) / 2);
+        const boxY =
+          data.cell.y + Math.min(4.2, (data.cell.height - boxSize) / 2);
         doc.setDrawColor(...SLATE_500);
         doc.setLineWidth(0.3);
         doc.rect(boxX, boxY, boxSize, boxSize, "S");
@@ -672,7 +945,6 @@ export function exportExamsPdf({
     },
   });
 
-  // Notes section below table
   const missingExamDatesCount = selectedModules.filter(
     (m) => !m.customExamDateRoom?.trim()
   ).length;
@@ -680,23 +952,16 @@ export function exportExamsPdf({
 
   const notes: string[] = [];
   if (missingExamDatesCount > 0) {
-    notes.push(
-      `• Bei ${missingExamDatesCount} ${
-        missingExamDatesCount === 1 ? "Modul fehlt" : "Modulen fehlen"
-      } noch Prüfungstermin oder Raum – bitte die verbindlichen Termine im eCampus/HISPOS nachtragen.`
-    );
+    notes.push(s.noteMissing(missingExamDatesCount));
   }
   if (hasMakeupModules) {
-    notes.push(
-      "• Auflagen (§ 6 FPO): Prüfungsanmeldung in der Regel manuell über das Prüfungsamt; Abschluss ist vor Anmeldung der Masterarbeit erforderlich."
-    );
+    notes.push(s.noteMakeup);
   }
-  notes.push(
-    "• Tipp: Prüfungsanmeldefristen sowie etwaige Vorleistungen (S1/S2) frühzeitig zu Semesterbeginn kontrollieren."
-  );
+  notes.push(s.noteTip);
 
-  const wrappedNotes = notes.map((line) =>
-    doc.splitTextToSize(sanitizePdfText(line), contentWidth - 7) as string[]
+  const wrappedNotes = notes.map(
+    (line) =>
+      doc.splitTextToSize(sanitizePdfText(line), contentWidth - 7) as string[]
   );
   const totalNoteLines = wrappedNotes.reduce(
     (sum, lines) => sum + lines.length,
@@ -724,7 +989,7 @@ export function exportExamsPdf({
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.5);
   doc.setTextColor(...SLATE_900);
-  doc.text("Hinweise zur Prüfungsplanung", margin + 3.5, notesY + 5.2);
+  doc.text(sanitizePdfText(s.notesHeading), margin + 3.5, notesY + 5.2);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.8);
@@ -735,6 +1000,6 @@ export function exportExamsPdf({
     noteLineY += lines.length * lineHeightMm;
   });
 
-  addDocumentFooters(doc);
-  doc.save(`Pruefungsuebersicht_${getSemesterFileSlug(activeSemester)}.pdf`);
+  addDocumentFooters(doc, pdfLang);
+  doc.save(s.examsFilename(getSemesterFileSlug(activeSemester)));
 }

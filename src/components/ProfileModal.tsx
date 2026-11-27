@@ -1,17 +1,28 @@
-import React, { useEffect, useState } from "react";
-import { Briefcase, GraduationCap, RotateCcw, Save, X } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  BACHELOR_BACKGROUND_OPTIONS,
+  Briefcase,
+  GraduationCap,
+  RotateCcw,
+  Save,
+  X,
+} from "lucide-react";
+import {
+  APP_LANGUAGE_OPTIONS,
   DEFAULT_USER_PROFILE_DRAFT,
-  MASTER_PROFILE_OPTIONS,
-  STUDY_SEMESTER_OPTIONS,
-  WORKLOAD_PREFERENCE_OPTIONS,
+  sanitizeAppLanguage,
+  type AppLanguage,
   type BachelorBackground,
   type CurrentStudySemester,
   type MasterProfileChoice,
   type UserProfile,
   type WorkloadPreference,
 } from "../types/userProfile";
+import {
+  LANGUAGE_SELECT_LABELS,
+  getLanguageDirection,
+  getLocalizedProfileOptions,
+  getTranslations,
+} from "../i18n/translations";
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -33,10 +44,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [draft, setDraft] = useState<UserProfile>(
     savedProfile ?? DEFAULT_USER_PROFILE_DRAFT
   );
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setDraft(savedProfile ?? DEFAULT_USER_PROFILE_DRAFT);
+      requestAnimationFrame(() => {
+        formRef.current?.focus({ preventScroll: true });
+      });
     }
   }, [isOpen, savedProfile]);
 
@@ -51,7 +66,39 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyPaddingRight = body.style.paddingRight;
+    const scrollbarWidth = window.innerWidth - html.clientWidth;
+
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) {
+      body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.paddingRight = prevBodyPaddingRight;
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const previewLang: AppLanguage = sanitizeAppLanguage(draft.language);
+  const t = getTranslations(previewLang).profileModal;
+  const langLabels = LANGUAGE_SELECT_LABELS[previewLang];
+  const {
+    bachelorOptions,
+    masterProfileOptions,
+    semesterOptions,
+    workloadOptions,
+  } = getLocalizedProfileOptions(previewLang);
 
   const handleTogglePartTimeJob = (enabled: boolean) => {
     setDraft((prev) => ({
@@ -73,6 +120,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         : "";
     onSave({
       ...draft,
+      language: previewLang,
       customBachelorProgram: cleanedCustomBachelor || undefined,
       jobHoursPerWeek: draft.hasPartTimeJob ? draft.jobHoursPerWeek : 0,
     });
@@ -84,8 +132,16 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="study-profile-modal-title"
+      dir={getLanguageDirection(previewLang)}
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+      onWheel={(e) => {
+        const formEl = formRef.current;
+        if (!formEl) return;
+        if (!formEl.contains(e.target as Node)) {
+          formEl.scrollTop += e.deltaY;
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 overscroll-contain"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -100,10 +156,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 id="study-profile-modal-title"
                 className="text-sm sm:text-base font-bold tracking-tight"
               >
-                Mein Studienprofil · Master DIT
+                {t.title}
               </h2>
               <p className="text-xs text-teal-100 mt-0.5 truncate">
-                Personalisiert deinen ECTS-Zähler und Dr. Raccoons Empfehlungen
+                {t.subtitle}
               </p>
             </div>
           </div>
@@ -111,7 +167,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Studienprofil-Fenster schließen"
+            aria-label={t.closeAria}
             className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/15 transition-colors shrink-0"
           >
             <X className="w-4 h-4" />
@@ -120,8 +176,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
         {/* Form Body */}
         <form
+          ref={formRef}
+          tabIndex={-1}
           onSubmit={handleSubmit}
-          className="flex-1 overflow-y-auto p-5 space-y-4"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 space-y-4 focus:outline-none"
         >
           {/* 1. Bachelor-Hintergrund */}
           <div className="space-y-2">
@@ -130,7 +188,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 htmlFor="profile-bachelor"
                 className="block text-xs font-semibold text-slate-800 mb-1.5"
               >
-                1. Bachelor-Hintergrund
+                {t.fields.bachelor}
               </label>
               <select
                 id="profile-bachelor"
@@ -143,7 +201,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 }
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
               >
-                {BACHELOR_BACKGROUND_OPTIONS.map((opt) => (
+                {bachelorOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -157,7 +215,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   htmlFor="profile-bachelor-custom"
                   className="block text-xs font-medium text-slate-700 mb-1"
                 >
-                  Genauer Bachelorstudiengang
+                  {t.fields.customBachelor}
                 </label>
                 <input
                   id="profile-bachelor-custom"
@@ -170,20 +228,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       customBachelorProgram: e.target.value,
                     }))
                   }
-                  placeholder="z. B. Wirtschaftsrecht, Soziologie, Psychologie"
+                  placeholder={t.fields.customBachelorPlaceholder}
                   className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
                 />
               </div>
             )}
           </div>
 
-          {/* 2. Gewähltes Master-Profil */}
+          {/* 3. Gewähltes Master-Profil */}
           <div>
             <label
               htmlFor="profile-master"
               className="block text-xs font-semibold text-slate-800 mb-1.5"
             >
-              2. Gewähltes Master-Profil
+              {t.fields.masterProfile}
             </label>
             <select
               id="profile-master"
@@ -196,7 +254,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               }
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
             >
-              {MASTER_PROFILE_OPTIONS.map((opt) => (
+              {masterProfileOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
@@ -204,13 +262,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </select>
           </div>
 
-          {/* 3. Aktuelles Fachsemester */}
+          {/* 4. Aktuelles Fachsemester */}
           <div>
             <label
               htmlFor="profile-semester"
               className="block text-xs font-semibold text-slate-800 mb-1.5"
             >
-              3. Aktuelles Fachsemester
+              {t.fields.semester}
             </label>
             <select
               id="profile-semester"
@@ -223,7 +281,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               }
               className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
             >
-              {STUDY_SEMESTER_OPTIONS.map((opt) => (
+              {semesterOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
@@ -231,17 +289,17 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </select>
           </div>
 
-          {/* 4. Nebenjob / Werkstudent (Toggle + Slider) */}
+          {/* 5. Nebenjob / Werkstudent (Toggle + Slider) */}
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
                 <Briefcase className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                <span>4. Nebenjob / Werkstudent</span>
+                <span>{t.fields.partTimeJob}</span>
               </div>
 
               <div
                 role="group"
-                aria-label="Nebenjob-Status auswählen"
+                aria-label={t.fields.jobStatusAria}
                 className="inline-flex items-center p-0.5 rounded-lg bg-slate-200/80 border border-slate-200"
               >
                 <button
@@ -253,7 +311,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  Kein Nebenjob
+                  {t.fields.noJob}
                 </button>
                 <button
                   type="button"
@@ -264,7 +322,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  Werkstudent / HiWi
+                  {t.fields.partTimeStudent}
                 </button>
               </div>
             </div>
@@ -279,10 +337,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   htmlFor="profile-job-hours"
                   className="font-medium text-slate-700"
                 >
-                  Wochenstunden
+                  {t.fields.hoursPerWeek}
                 </label>
-                <span className="font-mono font-semibold text-teal-800 tabular-nums">
-                  {draft.hasPartTimeJob ? draft.jobHoursPerWeek : 0} Std./Woche
+                <span
+                  dir="ltr"
+                  className="font-mono font-semibold text-teal-800 tabular-nums"
+                >
+                  {draft.hasPartTimeJob ? draft.jobHoursPerWeek : 0}{" "}
+                  {t.fields.hoursUnit}
                 </span>
               </div>
 
@@ -303,7 +365,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 className="w-full accent-teal-700 cursor-pointer disabled:cursor-not-allowed"
               />
 
-              <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 tabular-nums px-0.5">
+              <div
+                dir="ltr"
+                className="flex items-center justify-between text-[11px] font-mono text-slate-500 tabular-nums px-0.5"
+              >
                 {JOB_HOUR_STEPS.map((h) => (
                   <span key={h}>{h}h</span>
                 ))}
@@ -314,10 +379,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           {/* 5. Gewünschter Semester-Workload (Radio-Buttons) */}
           <fieldset className="space-y-2">
             <legend className="text-xs font-semibold text-slate-800 mb-1">
-              5. Gewünschter Semester-Workload
+              {t.fields.workload}
             </legend>
             <div className="space-y-2">
-              {WORKLOAD_PREFERENCE_OPTIONS.map((opt) => {
+              {workloadOptions.map((opt) => {
                 const isSelected = draft.workloadPreference === opt.value;
                 return (
                   <label
@@ -355,6 +420,33 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </div>
           </fieldset>
 
+          {/* 6. Sprache */}
+          <div>
+            <label
+              htmlFor="profile-language"
+              className="block text-xs font-semibold text-slate-800 mb-1.5"
+            >
+              {t.fields.language}
+            </label>
+            <select
+              id="profile-language"
+              value={previewLang}
+              onChange={(e) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  language: sanitizeAppLanguage(e.target.value),
+                }))
+              }
+              className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
+            >
+              {APP_LANGUAGE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {langLabels[opt.value]}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Footer Actions */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200">
             <div>
@@ -368,7 +460,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   className="inline-flex items-center gap-1.5 px-2.5 py-2 text-xs font-medium text-slate-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Profil zurücksetzen</span>
+                  <span>{t.resetBtn}</span>
                 </button>
               )}
             </div>
@@ -379,14 +471,14 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 onClick={onClose}
                 className="px-3.5 py-2 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors"
               >
-                Abbrechen
+                {t.cancelBtn}
               </button>
               <button
                 type="submit"
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors"
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>Profil speichern</span>
+                <span>{t.saveBtn}</span>
               </button>
             </div>
           </div>

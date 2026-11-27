@@ -13,16 +13,18 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { DitModule, SemesterId } from "../data/ditCatalog";
 import {
-  getRandomPromptStarters,
-  type DitModule,
-  type SemesterId,
-} from "../data/ditCatalog";
-import {
-  getProfileDisplayParts,
   getTargetEctsForProfile,
+  type AppLanguage,
   type UserProfile,
 } from "../types/userProfile";
+import {
+  getLocalizedProfileDisplayParts,
+  getPromptStartersByIndices,
+  getRandomStarterIndices,
+  getTranslations,
+} from "../i18n/translations";
 
 export interface ChatMessage {
   id: string;
@@ -33,6 +35,7 @@ export interface ChatMessage {
 
 interface AdvisorChatProps {
   activeSemester: SemesterId;
+  language?: AppLanguage;
   allModules: DitModule[];
   selectedModuleIds: string[];
   completedMakeupIds: string[];
@@ -45,14 +48,8 @@ interface AdvisorChatProps {
 
 const MASCOT_IMAGE_URL = "/assets/aistudio/raccoon_4_d26df235.jpeg";
 
-const STUDY_DOCUMENTS = [
-  {
-    id: "po-mhb",
-    title: "Prüfungsordnung und Modulhandbuch",
-    meta: "Universität Kassel · Master DIT (FB 07)",
-    href: "https://www.uni-kassel.de/uni/studium/digitale-innovation-und-transformation-master/pruefungsordnung-und-modulhandbuch.html",
-  },
-];
+const STUDY_DOCUMENT_HREF =
+  "https://www.uni-kassel.de/uni/studium/digitale-innovation-und-transformation-master/pruefungsordnung-und-modulhandbuch.html";
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -101,6 +98,11 @@ function extractSuggestedModules(
   if (!content.trim()) return [];
 
   const lower = content.toLowerCase();
+  const tableLines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && !/^\|[\s:|-]+\|?$/.test(line));
+
   const hasPlanningIntent =
     lower.includes("stundenplan") ||
     lower.includes("semesterplan") ||
@@ -110,14 +112,21 @@ function extractSuggestedModules(
     lower.includes("24-cp") ||
     lower.includes("vorschlag") ||
     lower.includes("empfehle") ||
-    lower.includes("zusammenstellung");
+    lower.includes("zusammenstellung") ||
+    lower.includes("timetable") ||
+    lower.includes("schedule") ||
+    lower.includes("study plan") ||
+    lower.includes("recommend") ||
+    lower.includes("emploi du temps") ||
+    lower.includes("programme") ||
+    lower.includes("برنامه") ||
+    lower.includes("پیشنهاد") ||
+    lower.includes("课表") ||
+    lower.includes("课程表") ||
+    lower.includes("推荐") ||
+    tableLines.length >= 3;
 
   if (!hasPlanningIntent) return [];
-
-  const tableLines = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("|") && !/^\|[\s:|-]+\|?$/.test(line));
 
   if (tableLines.length > 0) {
     const fromTable: DitModule[] = [];
@@ -143,6 +152,7 @@ function extractSuggestedModules(
 
 export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   activeSemester,
+  language = "de",
   allModules,
   selectedModuleIds,
   completedMakeupIds,
@@ -152,14 +162,21 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   onOpenProfileModal,
   onApplySuggestedModules,
 }) => {
+  const t = getTranslations(language).chat;
   const targetEcts = getTargetEctsForProfile(userProfile);
-  const profileDisplay = userProfile ? getProfileDisplayParts(userProfile) : null;
+  const profileDisplay = userProfile
+    ? getLocalizedProfileDisplayParts(userProfile, language)
+    : null;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [mascotImgFailed, setMascotImgFailed] = useState(false);
-  const [promptStarters, setPromptStarters] = useState<string[]>(() =>
-    getRandomPromptStarters(3)
+  const [starterIndices, setStarterIndices] = useState<number[]>(() =>
+    getRandomStarterIndices(3)
+  );
+  const promptStarters = useMemo(
+    () => getPromptStartersByIndices(language, starterIndices),
+    [language, starterIndices]
   );
   const [proposalDecisions, setProposalDecisions] = useState<
     Record<string, "accepted" | "dismissed">
@@ -190,13 +207,13 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
 
   const handleRefreshStarters = () => {
     if (isStreaming) return;
-    setPromptStarters((prev) => {
+    setStarterIndices((prev) => {
       for (let attempt = 0; attempt < 5; attempt++) {
-        const next = getRandomPromptStarters(3);
-        const hasDifference = next.some((q) => !prev.includes(q));
+        const next = getRandomStarterIndices(3);
+        const hasDifference = next.some((idx) => !prev.includes(idx));
         if (hasDifference) return next;
       }
-      return getRandomPromptStarters(3);
+      return getRandomStarterIndices(3);
     });
   };
 
@@ -250,12 +267,12 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
           moduleOverrides,
           activeSemester,
           userProfile,
+          language,
         }),
       });
 
       if (!response.ok) {
-        let errorMsg =
-          "Die Studienberatung konnte deine Anfrage leider nicht verarbeiten.";
+        let errorMsg = t.errorFallback;
         try {
           const errorJson = (await response.json()) as { error?: string };
           if (errorJson?.error) errorMsg = errorJson.error;
@@ -267,7 +284,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
 
       const reader = response.body?.getReader();
       if (!reader) {
-        throw new Error("Stream-Verbindung konnte nicht aufgebaut werden.");
+        throw new Error(t.streamError);
       }
 
       const decoder = new TextDecoder("utf-8");
@@ -328,13 +345,10 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
       }
 
       if (!accumulatedText.trim()) {
-        throw new Error("Keine Antwort vom KI-Studienberater erhalten.");
+        throw new Error(t.emptyResponseError);
       }
     } catch (err: unknown) {
-      const errorText =
-        err instanceof Error
-          ? err.message
-          : "Verbindungsfehler zur KI-Studienberatung.";
+      const errorText = err instanceof Error ? err.message : t.connectionError;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
@@ -367,7 +381,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
         }`}
       >
         <label htmlFor="advisor-chat-input" className="sr-only">
-          Frage an Dr. Raccoon stellen
+          {t.inputSrLabel}
         </label>
         <textarea
           ref={textareaRef}
@@ -377,7 +391,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={isStreaming}
-          placeholder={`Frag mich zu Modulen, Auflagen (§ 6 FPO) oder einem konfliktfreien ${targetEcts}-ECTS-Stundenplan.`}
+          placeholder={t.inputPlaceholder(targetEcts)}
           className="w-full min-h-[88px] resize-none rounded-t-2xl bg-transparent px-4 pt-3 pb-1.5 text-xs leading-relaxed text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
         <div className="flex items-center justify-end px-3 pb-2.5 pt-1">
@@ -387,7 +401,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
             className="inline-flex items-center justify-center gap-1.5 h-8 px-3.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Send className="w-3.5 h-3.5" />
-            <span>Senden</span>
+            <span>{t.send}</span>
           </button>
         </div>
       </div>
@@ -398,7 +412,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
 
   return (
     <section
-      aria-label="Interaktiver KI-Studienberater Dr. Raccoon"
+      aria-label={t.sectionAria}
       className={
         hasConversation
           ? "flex flex-col bg-teal-800/35 rounded-2xl overflow-hidden h-[720px] lg:h-[min(700px,calc(100vh-96px))] min-h-[560px]"
@@ -422,10 +436,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
           >
             <div className="flex items-center gap-2 min-w-0">
               <Info className="w-4 h-4 text-[#F8DAC5] shrink-0" />
-              <span className="leading-snug">
-                Hinweis: Fülle dein Studienprofil aus, damit Dr. Raccoon dich
-                passgenau berät.
-              </span>
+              <span className="leading-snug">{t.emptyProfileNote}</span>
             </div>
             {onOpenProfileModal && (
               <button
@@ -434,7 +445,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-teal-900 hover:bg-teal-50 font-semibold transition-colors whitespace-nowrap shrink-0"
               >
                 <User className="w-3.5 h-3.5 shrink-0" />
-                <span>Profil ausfüllen</span>
+                <span>{t.fillProfileBtn}</span>
               </button>
             )}
           </div>
@@ -458,7 +469,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
               <button
                 type="button"
                 onClick={onOpenProfileModal}
-                title="Gespeichertes Studienprofil bearbeiten"
+                title={t.editProfileTitle}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/25 bg-teal-800/75 hover:bg-teal-800 text-white text-xs font-semibold transition-colors whitespace-nowrap max-w-full"
               >
                 <span aria-hidden="true" className="shrink-0">
@@ -487,18 +498,21 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
               />
               <div className="space-y-1">
                 <p className="text-[clamp(9px,3.15cqw,12px)] font-medium text-teal-100 whitespace-nowrap">
-                  KI-Studienberatung · Master DIT · Universität Kassel (FB 07)
+                  {t.subtitle}
                 </p>
                 <h2 className="mx-auto font-bold tracking-tight leading-[1.25] text-white text-[clamp(14px,5.3cqw,25px)]">
                   <span className="block whitespace-nowrap">
-                    Hi, ich bin{" "}
-                    <span className="font-logo font-normal tracking-normal text-[#F8DAC5]">
+                    {t.greetingPrefix}{" "}
+                    <span
+                      dir="ltr"
+                      className="inline-block font-logo font-normal tracking-normal text-[#F8DAC5]"
+                    >
                       Dr. Raccoon
                     </span>
-                    .
+                    {language === "fa" || language === "zh" ? "。" : "."}
                   </span>
                   <span className="block whitespace-nowrap text-teal-100 font-semibold mt-0.5">
-                    Wie planen wir dieses Semester?
+                    {t.greetingQuestion}
                   </span>
                 </h2>
               </div>
@@ -510,18 +524,18 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
             {/* Prompt Starters Below Composer (with Refresh on Right) */}
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="pl-[15px] text-xs font-medium text-teal-50/90">
-                  Schnellstart-Fragen
+                <p className="ps-[15px] text-xs font-medium text-teal-50/90">
+                  {t.startersHeading}
                 </p>
                 <button
                   type="button"
                   onClick={handleRefreshStarters}
                   disabled={isStreaming}
-                  title="Neue Schnellstart-Fragen anzeigen"
+                  title={t.refreshTitle}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-teal-50 hover:text-white hover:bg-white/10 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Aktualisieren</span>
+                  <span>{t.refreshStarters}</span>
                 </button>
               </div>
 
@@ -532,7 +546,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                     type="button"
                     disabled={isStreaming}
                     onClick={() => void sendMessage(starter)}
-                    className="w-full text-left px-3.5 py-2 text-xs font-medium text-white bg-teal-800/55 hover:bg-teal-800/90 border border-white/20 hover:border-white/40 rounded-xl transition-colors disabled:opacity-50"
+                    className="w-full text-start px-3.5 py-2 text-xs font-medium text-white bg-teal-800/55 hover:bg-teal-800/90 border border-white/20 hover:border-white/40 rounded-xl transition-colors disabled:opacity-50"
                   >
                     {starter}
                   </button>
@@ -543,25 +557,22 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
             {/* Official Study Documents Below Prompt Starters */}
             <div className="pt-3 border-t border-white/15">
               <div className="space-y-1.5">
-                {STUDY_DOCUMENTS.map((doc) => (
-                  <a
-                    key={doc.id}
-                    href={doc.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border border-white/20 bg-teal-800/45 hover:bg-teal-800/85 hover:border-white/40 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-white truncate">
-                        {doc.title}
-                      </div>
-                      <div className="text-xs text-teal-100/90 truncate">
-                        {doc.meta}
-                      </div>
+                <a
+                  href={STUDY_DOCUMENT_HREF}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border border-white/20 bg-teal-800/45 hover:bg-teal-800/85 hover:border-white/40 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-white truncate">
+                      {t.docTitle}
                     </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-teal-100 group-hover:text-white shrink-0" />
-                  </a>
-                ))}
+                    <div className="text-xs text-teal-100/90 truncate">
+                      {t.docMeta}
+                    </div>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 text-teal-100 group-hover:text-white shrink-0" />
+                </a>
               </div>
             </div>
           </div>
@@ -575,175 +586,169 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
           >
             <div className="max-w-4xl mx-auto space-y-4">
               {messages.map((msg, index) => {
-              const isUser = msg.role === "user";
-              const isFinishedAssistant =
-                !isUser &&
-                !msg.isError &&
-                msg.content.trim().length > 0 &&
-                !(isStreaming && index === messages.length - 1);
+                const isUser = msg.role === "user";
+                const isFinishedAssistant =
+                  !isUser &&
+                  !msg.isError &&
+                  msg.content.trim().length > 0 &&
+                  !(isStreaming && index === messages.length - 1);
 
-              const suggestedModules = isFinishedAssistant
-                ? extractSuggestedModules(msg.content, semesterModules)
-                : [];
-              const decision = proposalDecisions[msg.id];
-              const suggestedTotalCp = suggestedModules.reduce(
-                (sum, m) => sum + m.cp,
-                0
-              );
+                const suggestedModules = isFinishedAssistant
+                  ? extractSuggestedModules(msg.content, semesterModules)
+                  : [];
+                const decision = proposalDecisions[msg.id];
+                const suggestedTotalCp = suggestedModules.reduce(
+                  (sum, m) => sum + m.cp,
+                  0
+                );
+                const suggestedCodes = suggestedModules
+                  .map((m) => m.code)
+                  .join(", ");
 
-              return (
-                <div key={msg.id} className="space-y-2">
-                  <div
-                    className={`flex gap-2.5 ${
-                      isUser ? "justify-end" : "justify-start"
-                    }`}
-                  >
-                    {!isUser && (
-                      <div className="w-7 h-7 rounded-lg overflow-hidden border border-white/30 bg-white p-0.5 shrink-0 mt-0.5 flex items-center justify-center">
-                        {!mascotImgFailed ? (
-                          <img
-                            src={MASCOT_IMAGE_URL}
-                            alt="Dr. Raccoon"
-                            referrerPolicy="no-referrer"
-                            onError={() => setMascotImgFailed(true)}
-                            className="w-full h-full object-contain"
-                          />
+                return (
+                  <div key={msg.id} className="space-y-2">
+                    <div
+                      className={`flex gap-2.5 ${
+                        isUser ? "justify-end" : "justify-start"
+                      }`}
+                    >
+                      {!isUser && (
+                        <div className="w-7 h-7 rounded-lg overflow-hidden border border-white/30 bg-white p-0.5 shrink-0 mt-0.5 flex items-center justify-center">
+                          {!mascotImgFailed ? (
+                            <img
+                              src={MASCOT_IMAGE_URL}
+                              alt="Dr. Raccoon"
+                              referrerPolicy="no-referrer"
+                              onError={() => setMascotImgFailed(true)}
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <GraduationCap className="w-4 h-4 text-teal-700" />
+                          )}
+                        </div>
+                      )}
+
+                      <div
+                        className={`max-w-[90%] rounded-2xl px-4 py-2.5 ${
+                          isUser
+                            ? "bg-teal-800/90 border border-white/20 text-white text-sm leading-relaxed"
+                            : msg.isError
+                            ? "bg-red-50 border border-red-200 text-red-900 text-sm"
+                            : "bg-white border border-white/25 text-slate-800 shadow-xs"
+                        }`}
+                      >
+                        {isUser ? (
+                          <p className="whitespace-pre-wrap">{msg.content}</p>
+                        ) : msg.isError ? (
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                            <p>{msg.content}</p>
+                          </div>
+                        ) : msg.content ? (
+                          <div className="raccoon-markdown">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {msg.content}
+                            </ReactMarkdown>
+                          </div>
                         ) : (
-                          <GraduationCap className="w-4 h-4 text-teal-700" />
+                          <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
+                            <Sparkles className="w-3.5 h-3.5 text-teal-700" />
+                            <span>{t.thinking}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {suggestedModules.length > 0 && decision !== "dismissed" && (
+                      <div className="ps-9.5 max-w-[92%]">
+                        {decision === "accepted" ? (
+                          <div className="inline-flex items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-medium text-teal-900">
+                            <Check className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                            <span>{t.proposalAccepted(suggestedCodes)}</span>
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-white/30 bg-white px-3.5 py-2.5 space-y-2 shadow-xs">
+                            <div className="flex items-start gap-2 text-xs text-slate-800">
+                              <CalendarCheck2 className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
+                              <div>
+                                <p className="font-semibold text-teal-950">
+                                  {t.proposalQuestion}
+                                </p>
+                                <p className="text-[11px] text-slate-600 mt-0.5">
+                                  {t.proposalModulesLabel}:{" "}
+                                  <span dir="ltr" className="inline-block">
+                                    {suggestedCodes} ({suggestedTotalCp} ECTS)
+                                  </span>
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onApplySuggestedModules(
+                                    suggestedModules.map((m) => m.id)
+                                  );
+                                  setProposalDecisions((prev) => ({
+                                    ...prev,
+                                    [msg.id]: "accepted",
+                                  }));
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold transition-colors"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>{t.proposalAccept}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setProposalDecisions((prev) => ({
+                                    ...prev,
+                                    [msg.id]: "dismissed",
+                                  }))
+                                }
+                                className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-xs font-medium text-slate-600 transition-colors"
+                              >
+                                {t.proposalDismiss}
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </div>
                     )}
-
-                    <div
-                      className={`max-w-[90%] rounded-2xl px-4 py-2.5 ${
-                        isUser
-                          ? "bg-teal-800/90 border border-white/20 text-white text-sm leading-relaxed"
-                          : msg.isError
-                          ? "bg-red-50 border border-red-200 text-red-900 text-sm"
-                          : "bg-white border border-white/25 text-slate-800 shadow-xs"
-                      }`}
-                    >
-                      {isUser ? (
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
-                      ) : msg.isError ? (
-                        <div className="flex items-start gap-2">
-                          <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                          <p>{msg.content}</p>
-                        </div>
-                      ) : msg.content ? (
-                        <div className="raccoon-markdown">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {msg.content}
-                          </ReactMarkdown>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
-                          <Sparkles className="w-3.5 h-3.5 text-teal-700" />
-                          <span>
-                            Dr. Raccoon prüft Prüfungsordnung &amp; Zeiten…
-                          </span>
-                        </div>
-                      )}
-                    </div>
                   </div>
-
-                  {suggestedModules.length > 0 && decision !== "dismissed" && (
-                    <div className="pl-9.5 max-w-[92%]">
-                      {decision === "accepted" ? (
-                        <div className="inline-flex items-center gap-1.5 rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-medium text-teal-900">
-                          <Check className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                          <span>
-                            Dein Stundenplan wurde mit diesem Vorschlag
-                            aktualisiert (
-                            {suggestedModules.map((m) => m.code).join(", ")}).
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="rounded-xl border border-white/30 bg-white px-3.5 py-2.5 space-y-2 shadow-xs">
-                          <div className="flex items-start gap-2 text-xs text-slate-800">
-                            <CalendarCheck2 className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
-                            <div>
-                              <p className="font-semibold text-teal-950">
-                                Soll dein aktueller Stundenplan durch diesen
-                                Vorschlag ersetzt werden?
-                              </p>
-                              <p className="text-[11px] text-slate-600 mt-0.5">
-                                Module:{" "}
-                                {suggestedModules.map((m) => m.code).join(", ")}{" "}
-                                ({suggestedTotalCp} ECTS)
-                              </p>
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onApplySuggestedModules(
-                                  suggestedModules.map((m) => m.id)
-                                );
-                                setProposalDecisions((prev) => ({
-                                  ...prev,
-                                  [msg.id]: "accepted",
-                                }));
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold transition-colors"
-                            >
-                              <Check className="w-3.5 h-3.5" />
-                              <span>Ja, Stundenplan aktualisieren</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setProposalDecisions((prev) => ({
-                                  ...prev,
-                                  [msg.id]: "dismissed",
-                                }))
-                              }
-                              className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-xs font-medium text-slate-600 transition-colors"
-                            >
-                              Nicht übernehmen
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
             </div>
           </div>
 
           <div className="border-t border-white/15 bg-teal-700 px-4 sm:px-6 py-3 shrink-0">
             <div className="max-w-4xl mx-auto space-y-2">
               {renderComposer(2)}
-            <div className="flex items-center justify-between gap-2 text-xs text-teal-100 px-1">
-              <div className="flex items-center gap-x-2 min-w-0">
-                {STUDY_DOCUMENTS.map((doc) => (
+              <div className="flex items-center justify-between gap-2 text-xs text-teal-100 px-1">
+                <div className="flex items-center gap-x-2 min-w-0">
                   <a
-                    key={doc.id}
-                    href={doc.href}
+                    href={STUDY_DOCUMENT_HREF}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 min-w-0 hover:text-white hover:underline underline-offset-2 transition-colors"
                   >
-                    <span className="truncate">{doc.title}</span>
+                    <span className="truncate">{t.docTitle}</span>
                     <ExternalLink className="w-3 h-3 shrink-0" />
                   </a>
-                ))}
-              </div>
+                </div>
 
-              <button
-                type="button"
-                onClick={handleNewChat}
-                disabled={isStreaming}
-                title="Zurück zur Startansicht mit Schnellstart-Fragen"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-teal-50 hover:text-white hover:bg-white/10 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Neuer Chat</span>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={handleNewChat}
+                  disabled={isStreaming}
+                  title={t.newChatTitle}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-teal-50 hover:text-white hover:bg-white/10 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>{t.newChat}</span>
+                </button>
+              </div>
             </div>
           </div>
         </>

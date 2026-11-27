@@ -15,7 +15,9 @@ import {
 import {
   buildUserProfileContextJson,
   getTargetEctsForProfile,
+  sanitizeAppLanguage,
   sanitizeUserProfile,
+  type AppLanguage,
   type UserProfile,
 } from "./src/types/userProfile.ts";
 
@@ -60,13 +62,44 @@ interface ChatRequestMessage {
   content: string;
 }
 
+const LANGUAGE_DIRECTIVES: Record<
+  AppLanguage,
+  { name: string; instruction: string }
+> = {
+  de: {
+    name: "Deutsch",
+    instruction: "Antworte klar strukturiert, freundlich und auf Deutsch.",
+  },
+  en: {
+    name: "English",
+    instruction:
+      "Respond clearly, concisely, and warmly in English. Keep official German/English core domain terms (such as Master DIT, Universität Kassel, DITraM, UCeDI, CIDA, ECTS, CP, eCampus, HISPOS, Auflagen (§ 6 FPO), Klausur, Hausarbeit, Studienverlaufsplan, official module codes like BWL-P2, and official module titles) in their original German or English.",
+  },
+  fa: {
+    name: "فارسی (Persian)",
+    instruction:
+      "پاسخ خود را به صورت واضح، ساختاریافته و دوستانه به زبان فارسی (Persian) بنویس. اصطلاحات کلیدی رسمی دانشگاهی را به زبان اصلی آلمانی یا انگلیسی حفظ کن (مانند Dr. Raccoon، Master DIT، Universität Kassel، DITraM، UCeDI، CIDA، ECTS، CP، eCampus، HISPOS، Auflagen (§ 6 FPO)، Klausur، Hausarbeit، کدهای رسمی ماژول‌ها مثل BWL-P2 و عناوین رسمی دروس).",
+  },
+  fr: {
+    name: "Français",
+    instruction:
+      "Réponds de manière claire, structurée et bienveillante en français. Conserve les termes clés officiels dans leur langue d'origine allemande ou anglaise (comme Master DIT, Universität Kassel, DITraM, UCeDI, CIDA, ECTS, CP, eCampus, HISPOS, Auflagen (§ 6 FPO), Klausur, Hausarbeit, les codes de modules officiels comme BWL-P2 et les intitulés officiels des modules).",
+  },
+  zh: {
+    name: "中文 (Simplified Chinese)",
+    instruction:
+      "请使用清晰、有条理且友好的简体中文回答。将官方核心专有名词保留为德语或英语原文（例如：Master DIT、Universität Kassel、DITraM、UCeDI、CIDA、ECTS、CP、eCampus、HISPOS、Auflagen (§ 6 FPO)、Klausur、Hausarbeit、模块代码如 BWL-P2 以及官方模块名称）。",
+  },
+};
+
 function buildSystemInstruction(
   selectedModuleIds: string[],
   completedMakeupIds: string[],
   activeSemester: SemesterId,
   customModules: DitModule[],
   moduleOverrides: Record<string, Partial<DitModule>> = {},
-  userProfile: UserProfile | null = null
+  userProfile: UserProfile | null = null,
+  language: AppLanguage = "de"
 ): string {
   const targetEcts = getTargetEctsForProfile(userProfile);
   const userProfileJson = buildUserProfileContextJson(userProfile);
@@ -173,10 +206,10 @@ Befolge bei jeder Beratungsanfrage intern diese Schritte, bevor du antwortest:
 - **Workload- & Anti-Sycophancy-Check:** Wenn der Nutzer laut \`<user_profile>\` eine hohe Werkstudententätigkeit hat (z. B. 15–20 Std./Woche), aber gleichzeitig 30+ ECTS (oder im aktuellen Plan bereits sehr hohe CP / viele prüfungsintensive bzw. als aufwändig bekannte Module) anstrebt oder wählt, weise freundlich aber bestimmt auf das konkrete Überlastungsrisiko hin (da 30 CP ≈ 900 Std./Semester + Nebenjob) und schlage proaktiv eine realistischere Alternative vor (z. B. Reduktion auf ~24 ECTS bzw. einen ausgewogeneren Mix aus Klausur- und Seminarmodulen).
 - **Fallback bei leerem Profil:** Falls \`profileConfigured\` in \`<user_profile>\` \`false\` ist (noch kein Profil ausgefüllt), frage bei allgemeinen Planungsanfragen gezielt nach Bachelor-Hintergrund, gewünschtem Master-Profil (DITraM, UCeDI, CIDA) und zeitlicher Verfügbarkeit (Nebenjob / gewünschter ECTS-Workload) — und weise optional kurz darauf hin, dass das Profil oben rechts über „Mein Profil“ gespeichert werden kann.
 
-# Output Format
-- Antworte klar strukturiert, freundlich und auf Deutsch.
-- Nutze für Modulvergleiche oder Stundenpläne immer eine übersichtliche Markdown-Tabelle (Spalten: \`Modul\` | \`CPs\` | \`Sprache\` | \`Prüfungsform\` | \`Workload-Einschätzung\`). Gib in der Spalte \`Modul\` möglichst immer den offiziellen Modulcode samt Namen an (z. B. \`BWL-P2: Informationsmanagement\`).
-- Schließe jede Antwort mit einer konkreten Rückfrage ab, um die Planung weiter zu verfeinern.`;
+# Output Format & Language (${LANGUAGE_DIRECTIVES[language].name})
+- ${LANGUAGE_DIRECTIVES[language].instruction}
+- Nutze für Modulvergleiche oder Stundenpläne immer eine übersichtliche Markdown-Tabelle (5 Spalten: Modul | CPs / ECTS | Sprache | Prüfungsform | Workload — übersetze die Spaltenüberschriften passend in ${LANGUAGE_DIRECTIVES[language].name}, aber behalte im Feld „Modul“ immer den offiziellen Modulcode samt Originalnamen bei, z. B. \`BWL-P2: Informationsmanagement\`).
+- Schließe jede Antwort mit einer konkreten Rückfrage in ${LANGUAGE_DIRECTIVES[language].name} ab, um die Planung weiter zu verfeinern.`;
 }
 
 async function startServer() {
@@ -207,6 +240,7 @@ async function startServer() {
       moduleOverrides?: Record<string, Partial<DitModule>>;
       activeSemester?: SemesterId;
       userProfile?: UserProfile | null;
+      language?: AppLanguage;
     };
 
     const messages = Array.isArray(body?.messages) ? body.messages : [];
@@ -237,6 +271,7 @@ async function startServer() {
     const activeSemester: SemesterId =
       body?.activeSemester === "sose27" ? "sose27" : "wise2627";
     const userProfile = sanitizeUserProfile(body?.userProfile);
+    const language = sanitizeAppLanguage(body?.language ?? userProfile?.language);
 
     const systemInstruction = buildSystemInstruction(
       selectedModuleIds,
@@ -244,7 +279,8 @@ async function startServer() {
       activeSemester,
       customModules,
       moduleOverrides,
-      userProfile
+      userProfile,
+      language
     );
 
     const rawMessages = messages

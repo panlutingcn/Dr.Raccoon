@@ -15,23 +15,20 @@ import {
 } from "lucide-react";
 import { exportTimetablePdf } from "../utils/pdfExport";
 import {
-  getProfileDisplayParts,
   getTargetEctsForProfile,
+  type AppLanguage,
   type UserProfile,
 } from "../types/userProfile";
 import {
   AREA_FILTER_OPTIONS,
-  SEMESTER_INFOS,
   SESSION_TYPES,
   TIME_BLOCKS,
   WEEKDAYS,
   detectScheduleConflicts,
   doSlotsOverlap,
-  formatModuleScheduleSummary,
   getActiveScheduleSlots,
   getAreaSwatchClasses,
   getModuleColorTheme,
-  getModuleIntroduction,
   getSlotTimeRange,
   getTimetableBlockHour,
   minutesToDecimalHour,
@@ -44,9 +41,16 @@ import {
   type TeachingLanguage,
   type Weekday,
 } from "../data/ditCatalog";
+import {
+  formatLocalizedScheduleSummary,
+  getLocalizedModuleIntroduction,
+  getLocalizedProfileDisplayParts,
+  getTranslations,
+} from "../i18n/translations";
 
 interface TimetablePanelProps {
   activeSemester: SemesterId;
+  language?: AppLanguage;
   allModules: DitModule[];
   selectedModuleIds: string[];
   moduleOverrides?: Record<string, Partial<DitModule>>;
@@ -107,12 +111,9 @@ function getSessionBadgeClass(sessionType: SessionType): string {
   }
 }
 
-function formatModuleTimeSummary(mod: DitModule): string {
-  return formatModuleScheduleSummary(mod);
-}
-
 export const TimetablePanel: React.FC<TimetablePanelProps> = ({
   activeSemester,
+  language = "de",
   allModules,
   selectedModuleIds,
   moduleOverrides = {},
@@ -125,9 +126,15 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
   onDeleteCustomModule,
   onClearSchedule,
 }) => {
-  const semesterInfo = SEMESTER_INFOS[activeSemester];
+  const tr = getTranslations(language);
+  const t = tr.timetable;
+  const c = tr.catalog;
+  const po = tr.profileOptions;
+  const semesterInfo = c.semesters[activeSemester];
   const targetEcts = getTargetEctsForProfile(userProfile);
-  const profileDisplay = userProfile ? getProfileDisplayParts(userProfile) : null;
+  const profileDisplay = userProfile
+    ? getLocalizedProfileDisplayParts(userProfile, language)
+    : null;
   const [searchQuery, setSearchQuery] = useState("");
   const [areaFilter, setAreaFilter] = useState<AreaFilter>("Alle");
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("Alle");
@@ -228,7 +235,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
     setDetailExamType(mod.examType);
     setDetailExamDateRoom(mod.customExamDateRoom ?? "");
     setDetailLanguage(mod.language);
-    setDetailDescription(getModuleIntroduction(mod));
+    setDetailDescription(getLocalizedModuleIntroduction(mod, language));
   };
 
   const handleAddDetailSlot = () => {
@@ -291,7 +298,9 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
       if (!draft.day) {
         if (detailSlots.length > 1) {
           setDetailError(
-            `Bitte wähle für „${draft.sessionType}“ einen Wochentag aus oder entferne den leeren Termin.`
+            t.detailModal.errMissingWeekday(
+              c.sessionTypes[draft.sessionType] ?? draft.sessionType
+            )
           );
           return;
         }
@@ -301,7 +310,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
       const endMin = parseTimeToMinutes(draft.endTime);
       if (startMin === null || endMin === null || endMin <= startMin) {
         setDetailError(
-          `Bitte prüfe die Uhrzeit für „${draft.sessionType} (${draft.day})“: Die Endzeit muss nach der Startzeit liegen.`
+          t.detailModal.errInvalidSlotTime(
+            c.sessionTypes[draft.sessionType] ?? draft.sessionType,
+            c.weekdays[draft.day]
+          )
         );
         return;
       }
@@ -347,13 +359,21 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
         ? undefined
         : detailModule.realScheduleLabel;
 
+    const defaultLocalizedIntro = getLocalizedModuleIntroduction(
+      { ...detailModule, description: undefined },
+      language
+    );
+
     onUpdateModule(detailModule.id, {
       schedule: nextSchedule,
       realScheduleLabel: nextRealScheduleLabel,
       examType: trimmedExamType,
       customExamDateRoom: trimmedExamDateRoom || undefined,
       language: detailLanguage,
-      description: trimmedDescription || undefined,
+      description:
+        trimmedDescription && trimmedDescription !== defaultLocalizedIntro
+          ? trimmedDescription
+          : detailModule.description,
     });
     setDetailModuleId(null);
   };
@@ -383,10 +403,11 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
         mod.title.toLowerCase().includes(q) ||
         mod.ecampusTitle.toLowerCase().includes(q) ||
         mod.code.toLowerCase().includes(q) ||
-        mod.area.toLowerCase().includes(q)
+        mod.area.toLowerCase().includes(q) ||
+        c.areas[mod.area].toLowerCase().includes(q)
       );
     });
-  }, [availableModules, searchQuery, areaFilter, languageFilter]);
+  }, [availableModules, searchQuery, areaFilter, languageFilter, c.areas]);
 
   const regularCp = selectedModules
     .filter((m) => m.area !== "Auflagen")
@@ -426,7 +447,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
     e.preventDefault();
     const trimmedTitle = customTitle.trim();
     if (!trimmedTitle) {
-      setCustomFormError("Bitte gib einen Modultitel ein.");
+      setCustomFormError(t.customForm.errMissingTitle);
       return;
     }
 
@@ -438,9 +459,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
       const startMin = parseTimeToMinutes(customStartTime);
       const endMin = parseTimeToMinutes(customEndTime);
       if (startMin === null || endMin === null || endMin <= startMin) {
-        setCustomFormError(
-          "Bitte prüfe Start- und Endzeit (Ende muss nach Beginn liegen)."
-        );
+        setCustomFormError(t.customForm.errInvalidTime);
         return;
       }
       schedule = [
@@ -512,7 +531,9 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   <AlertTriangle className="w-4 h-4 shrink-0" />
                   <span>
                     {conflicts.length}{" "}
-                    {conflicts.length === 1 ? "Konflikt" : "Konflikte"}
+                    {conflicts.length === 1
+                      ? t.conflictSingular
+                      : t.conflictPlural}
                   </span>
                 </span>
                 <span aria-hidden="true" className="text-slate-300">
@@ -521,13 +542,19 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
               </>
             )}
 
-            <span className="font-mono font-semibold text-teal-800 tabular-nums whitespace-nowrap">
+            <span
+              dir="ltr"
+              className="font-mono font-semibold text-teal-800 tabular-nums whitespace-nowrap"
+            >
               {regularCp} / {targetEcts} ECTS
             </span>
 
             {makeupCp > 0 && (
-              <span className="text-[#ff8000] font-medium tabular-nums whitespace-nowrap">
-                (+{makeupCp} ECTS Auflagen)
+              <span
+                dir="ltr"
+                className="text-[#ff8000] font-medium tabular-nums whitespace-nowrap"
+              >
+                {t.makeupAddOn(makeupCp)}
               </span>
             )}
           </div>
@@ -540,18 +567,19 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   activeSemester,
                   selectedModules,
                   userProfile,
+                  language,
                 })
               }
               disabled={selectedModules.length === 0}
               title={
                 selectedModules.length === 0
-                  ? "Wähle zuerst mindestens ein Modul aus"
-                  : "Stundenplan als PDF herunterladen"
+                  ? t.savePdfDisabledTitle
+                  : t.savePdfTitle
               }
               className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-600/35 hover:border-teal-700 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 disabled:pointer-events-none"
             >
               <FileDown className="w-3.5 h-3.5" />
-              <span>Als PDF speichern</span>
+              <span>{t.savePdf}</span>
             </button>
 
             <button
@@ -561,7 +589,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Leeren</span>
+              <span>{t.clear}</span>
             </button>
           </div>
         </div>
@@ -575,30 +603,32 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   🎓
                 </span>
                 <span className="truncate">
-                  Bachelor: {profileDisplay.bachelorOpt.chipLabel}
+                  {po.bachelorChipPrefix}: {profileDisplay.bachelorOpt.chipLabel}
                 </span>
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/80 text-slate-700 font-medium whitespace-nowrap">
                 <span aria-hidden="true">🎯</span>
-                <span>Profil: {profileDisplay.masterOpt.shortLabel}</span>
+                <span>
+                  {po.profileChipPrefix}: {profileDisplay.masterOpt.shortLabel}
+                </span>
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/80 text-slate-700 font-medium tabular-nums whitespace-nowrap">
                 <span aria-hidden="true">💼</span>
                 <span>
                   {userProfile.hasPartTimeJob
-                    ? `Werkstudent: ${userProfile.jobHoursPerWeek}h/Wo.`
-                    : "Kein Nebenjob"}
+                    ? po.partTimeChip(userProfile.jobHoursPerWeek)
+                    : po.noJobChip}
                 </span>
               </span>
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50/70 border border-teal-200/80 text-teal-900 font-medium tabular-nums whitespace-nowrap">
                 <span aria-hidden="true">⚖️</span>
-                <span>Ziel: {profileDisplay.workloadOpt.chipLabel}</span>
+                <span>
+                  {po.targetChipPrefix}: {profileDisplay.workloadOpt.chipLabel}
+                </span>
               </span>
             </div>
           ) : (
-            <span className="text-slate-500">
-              Noch kein Studienprofil hinterlegt · Standardziel: 30 ECTS
-            </span>
+            <span className="text-slate-500">{t.emptyProfileStatus}</span>
           )}
 
           {onOpenProfileModal && (
@@ -608,7 +638,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
               className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-teal-800 bg-white hover:bg-teal-50 border border-teal-600/35 hover:border-teal-700 rounded-md transition-colors whitespace-nowrap shrink-0"
             >
               <SlidersHorizontal className="w-3 h-3" />
-              <span>Profil anpassen</span>
+              <span>{t.adjustProfile}</span>
             </button>
           )}
         </div>
@@ -619,11 +649,9 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
         {selectedModules.length === 0 ? (
           <div className="border border-dashed border-slate-300 rounded-xl p-6 text-center bg-slate-50/70">
             <p className="text-sm font-medium text-slate-800">
-              Dein Stundenplan für {semesterInfo.shortLabel} ist aktuell leer.
+              {t.emptyGridTitle(semesterInfo.shortLabel)}
             </p>
-            <p className="text-xs text-slate-500 mt-1">
-              Wähle unten Module aus dem Angebot oder füge ein eigenes Modul hinzu.
-            </p>
+            <p className="text-xs text-slate-500 mt-1">{t.emptyGridSubtitle}</p>
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -631,15 +659,15 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
               <table className="w-full min-w-[600px] border-collapse table-fixed">
                 <thead>
                   <tr className="bg-teal-50 border-b border-slate-200">
-                    <th className="w-20 px-2.5 py-2 text-left text-xs font-semibold text-slate-600">
-                      Zeit
+                    <th className="w-20 px-2.5 py-2 text-start text-xs font-semibold text-slate-600">
+                      {t.gridTimeCol}
                     </th>
                     {WEEKDAYS.map((day) => (
                       <th
                         key={day}
-                        className="px-2 py-2 text-left text-xs font-semibold border-l border-slate-200 text-teal-900"
+                        className="px-2 py-2 text-start text-xs font-semibold border-s border-slate-200 text-teal-900"
                       >
-                        {day}
+                        {c.weekdays[day]}
                       </th>
                     ))}
                   </tr>
@@ -651,9 +679,11 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                       className="border-b border-slate-200 last:border-b-0"
                     >
                       <td className="px-2.5 py-2.5 text-[11px] font-mono text-slate-500 align-top tabular-nums bg-slate-50/50">
-                        <div>{String(hour).padStart(2, "0")}:00</div>
+                        <div dir="ltr">{String(hour).padStart(2, "0")}:00</div>
                         <div className="text-[10px] text-slate-400">
-                          bis {String(hour + 2).padStart(2, "0")}:00
+                          {t.gridTimeUntil(
+                            `${String(hour + 2).padStart(2, "0")}:00`
+                          )}
                         </div>
                       </td>
                       {WEEKDAYS.map((day) => {
@@ -688,7 +718,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         return (
                           <td
                             key={slotKey}
-                            className={`p-1.5 border-l border-slate-200 align-top h-[62px] ${
+                            className={`p-1.5 border-s border-slate-200 align-top h-[62px] ${
                               cellHasConflict ? "bg-red-50/70" : ""
                             }`}
                           >
@@ -696,6 +726,13 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                               {cellEntries.map(
                                 ({ mod, slot, range, hasConflict }, idx) => {
                                   const theme = getModuleColorTheme(mod);
+                                  const sessionLabel =
+                                    c.sessionTypes[slot.sessionType] ??
+                                    slot.sessionType;
+                                  const roomLabel =
+                                    slot.room === "Raum fehlt"
+                                      ? c.noRoom
+                                      : slot.room;
                                   return (
                                     <div
                                       key={`${mod.id}-${slot.id ?? idx}-${slot.day}-${range.startStr}`}
@@ -711,7 +748,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                           openModuleDetail(mod);
                                         }
                                       }}
-                                      title={`${mod.title} (${slot.sessionType}) bearbeiten`}
+                                      title={t.editSlotTitle(
+                                        mod.title,
+                                        sessionLabel
+                                      )}
                                       className={`group rounded-md px-2 py-1.5 border text-xs cursor-pointer transition-colors ${
                                         hasConflict
                                           ? "bg-white border-red-300 text-red-950"
@@ -721,6 +761,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                       <div className="flex items-center justify-between gap-1">
                                         <div className="flex items-center gap-1 min-w-0">
                                           <span
+                                            dir="ltr"
                                             className={`font-mono text-[11px] font-semibold truncate ${theme.textClass}`}
                                           >
                                             {mod.code}
@@ -730,7 +771,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                               slot.sessionType
                                             )}`}
                                           >
-                                            {slot.sessionType}
+                                            {sessionLabel}
                                           </span>
                                         </div>
                                         <button
@@ -739,7 +780,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                             e.stopPropagation();
                                             onToggleModule(mod.id);
                                           }}
-                                          title={`${mod.title} entfernen`}
+                                          title={t.removeModuleTitle(mod.title)}
                                           className="text-slate-400 hover:text-red-600 rounded transition-colors shrink-0"
                                         >
                                           <X className="w-3 h-3" />
@@ -749,8 +790,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                         {mod.title}
                                       </div>
                                       <div className="text-[10px] text-slate-600 leading-snug line-clamp-1 mt-0.5 tabular-nums">
-                                        {range.startStr}–{range.endStr} ·{" "}
-                                        {slot.room}
+                                        <span dir="ltr" className="inline-block">
+                                          {range.startStr}–{range.endStr}
+                                        </span>{" "}
+                                        · {roomLabel}
                                       </div>
                                     </div>
                                   );
@@ -769,12 +812,15 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
             {selectedModules.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5 space-y-1.5 text-xs">
                 <div className="font-semibold text-slate-700">
-                  Aktuell ausgewählte Module ({selectedModules.length}):
+                  {t.selectedModulesHeading(selectedModules.length)}
                 </div>
                 <div className="space-y-1.5">
                   {selectedModules.map((mod) => {
                     const theme = getModuleColorTheme(mod);
-                    const timeSummary = formatModuleTimeSummary(mod);
+                    const timeSummary = formatLocalizedScheduleSummary(
+                      mod,
+                      language
+                    );
                     return (
                       <div
                         key={mod.id}
@@ -784,6 +830,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                             <span
+                              dir="ltr"
                               className={`font-mono font-semibold shrink-0 ${theme.textClass}`}
                             >
                               {mod.code}
@@ -798,7 +845,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <span
-                            title="Termine & Details bearbeiten"
+                            title={t.editDetailsTitle}
                             className="p-0.5 text-slate-400"
                           >
                             <Pencil className="w-3 h-3" />
@@ -809,7 +856,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                               e.stopPropagation();
                               onToggleModule(mod.id);
                             }}
-                            title={`${mod.title} entfernen`}
+                            title={t.removeModuleTitle(mod.title)}
                             className="p-0.5 text-slate-400 hover:text-red-600 transition-colors shrink-0"
                           >
                             <X className="w-3.5 h-3.5" />
@@ -830,9 +877,12 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-baseline gap-2">
             <h3 className="text-sm font-semibold text-teal-800">
-              Kurswahl · Modulangebot ({semesterInfo.shortLabel})
+              {t.catalogHeading(semesterInfo.shortLabel)}
             </h3>
-            <span className="text-xs text-slate-500 tabular-nums">
+            <span
+              dir="ltr"
+              className="text-xs text-slate-500 tabular-nums"
+            >
               {filteredModules.length} / {availableModules.length}
             </span>
           </div>
@@ -848,12 +898,12 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
             {showCustomForm ? (
               <>
                 <X className="w-3.5 h-3.5" />
-                <span>Abbrechen</span>
+                <span>{t.cancel}</span>
               </>
             ) : (
               <>
                 <Plus className="w-3.5 h-3.5" />
-                <span>Eigenes Modul hinzufügen</span>
+                <span>{t.addCustomModule}</span>
               </>
             )}
           </button>
@@ -867,10 +917,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
           >
             <div className="flex items-center justify-between gap-2">
               <h4 className="text-xs font-semibold text-teal-900">
-                Neues Modul für {semesterInfo.shortLabel} anlegen
+                {t.newModuleHeading(semesterInfo.shortLabel)}
               </h4>
               <span className="text-[11px] text-slate-500">
-                Fehlende Zeiten/Räume werden als „Zeit/Raum fehlt“ markiert
+                {t.missingScheduleHint}
               </span>
             </div>
 
@@ -886,14 +936,14 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-code"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Modulcode
+                  {t.customForm.code}
                 </label>
                 <input
                   id="custom-code"
                   type="text"
                   value={customCode}
                   onChange={(e) => setCustomCode(e.target.value)}
-                  placeholder="z. B. WAHL-99"
+                  placeholder={t.customForm.codePlaceholder}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 />
               </div>
@@ -903,7 +953,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-title"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Modultitel *
+                  {t.customForm.title}
                 </label>
                 <input
                   id="custom-title"
@@ -911,7 +961,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   required
                   value={customTitle}
                   onChange={(e) => setCustomTitle(e.target.value)}
-                  placeholder="z. B. Data Science Seminar"
+                  placeholder={t.customForm.titlePlaceholder}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 />
               </div>
@@ -921,7 +971,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-cp"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  ECTS
+                  {t.customForm.ects}
                 </label>
                 <input
                   id="custom-cp"
@@ -939,7 +989,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-area"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Bereich
+                  {t.customForm.area}
                 </label>
                 <select
                   id="custom-area"
@@ -949,7 +999,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                 >
                   {CUSTOM_AREAS.map((area) => (
                     <option key={area} value={area}>
-                      {area}
+                      {c.areas[area]}
                     </option>
                   ))}
                 </select>
@@ -960,7 +1010,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-lang"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Sprache
+                  {t.customForm.language}
                 </label>
                 <select
                   id="custom-lang"
@@ -972,7 +1022,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                 >
                   {CUSTOM_LANGUAGES.map((lang) => (
                     <option key={lang} value={lang}>
-                      {lang}
+                      {c.teachingLanguages[lang]}
                     </option>
                   ))}
                 </select>
@@ -983,7 +1033,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-session-type"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Terminart
+                  {t.customForm.sessionType}
                 </label>
                 <select
                   id="custom-session-type"
@@ -993,9 +1043,9 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   }
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 >
-                  {SESSION_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
+                  {SESSION_TYPES.map((st) => (
+                    <option key={st} value={st}>
+                      {c.sessionTypes[st]}
                     </option>
                   ))}
                 </select>
@@ -1006,7 +1056,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-day"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Wochentag (optional)
+                  {t.customForm.weekdayOptional}
                 </label>
                 <select
                   id="custom-day"
@@ -1016,10 +1066,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   }
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 >
-                  <option value="">Keine Angabe</option>
+                  <option value="">{t.customForm.noDayOption}</option>
                   {WEEKDAYS.map((d) => (
                     <option key={d} value={d}>
-                      {d}
+                      {c.weekdays[d]}
                     </option>
                   ))}
                 </select>
@@ -1030,7 +1080,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-start-time"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Beginn (frei)
+                  {t.customForm.startFree}
                 </label>
                 <input
                   id="custom-start-time"
@@ -1046,7 +1096,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-end-time"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Ende (frei)
+                  {t.customForm.endFree}
                 </label>
                 <input
                   id="custom-end-time"
@@ -1062,14 +1112,14 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-room"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Raum / Ort (optional)
+                  {t.customForm.roomOptional}
                 </label>
                 <input
                   id="custom-room"
                   type="text"
                   value={customRoom}
                   onChange={(e) => setCustomRoom(e.target.value)}
-                  placeholder="z. B. Nora-Platiel-Str. 1 · R 0210"
+                  placeholder={t.customForm.roomPlaceholder}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 />
               </div>
@@ -1079,14 +1129,14 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-exam-type"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Prüfungsform (optional)
+                  {t.customForm.examTypeOptional}
                 </label>
                 <input
                   id="custom-exam-type"
                   type="text"
                   value={customExamType}
                   onChange={(e) => setCustomExamType(e.target.value)}
-                  placeholder="z. B. Klausur (90 Min.) oder Hausarbeit"
+                  placeholder={t.customForm.examTypePlaceholder}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 />
               </div>
@@ -1096,14 +1146,14 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   htmlFor="custom-exam-date"
                   className="block text-[11px] font-medium text-slate-700 mb-1"
                 >
-                  Prüfungstermin &amp; Raum (optional)
+                  {t.customForm.examDateOptional}
                 </label>
                 <input
                   id="custom-exam-date"
                   type="text"
                   value={customExamDateRoom}
                   onChange={(e) => setCustomExamDateRoom(e.target.value)}
-                  placeholder="z. B. 18.02.2027, 10:00 · HS 1"
+                  placeholder={t.customForm.examDatePlaceholder}
                   className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                 />
               </div>
@@ -1118,14 +1168,14 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                 }}
                 className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors"
               >
-                Abbrechen
+                {t.cancel}
               </button>
               <button
                 type="submit"
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Speichern &amp; zum Stundenplan</span>
+                <span>{t.customForm.saveAndAdd}</span>
               </button>
             </div>
           </form>
@@ -1134,28 +1184,30 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
         {/* Search & Language Filter Row */}
         <div className="flex flex-col sm:flex-row gap-2.5">
           <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Search className="w-4 h-4 text-slate-400 absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Modul oder Code suchen…"
-              className="w-full pl-9 pr-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
+              placeholder={t.searchPlaceholder}
+              className="w-full ps-9 pe-3 py-1.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
             />
           </div>
 
           <select
-            aria-label="Nach Unterrichtssprache filtern"
+            aria-label={t.languageFilterAria}
             value={languageFilter}
             onChange={(e) =>
               setLanguageFilter(e.target.value as LanguageFilter)
             }
             className="px-3 py-1.5 text-xs font-medium bg-white border border-slate-300 rounded-lg text-slate-700 focus:border-teal-700 focus:outline-none"
           >
-            <option value="Alle">Alle Sprachen</option>
-            <option value="Englisch">Englisch</option>
-            <option value="Deutsch">Deutsch</option>
-            <option value="Sprachbrücke">Sprachbrücke (DE → EN)</option>
+            <option value="Alle">{t.languageFilterOptions.all}</option>
+            <option value="Englisch">{t.languageFilterOptions.english}</option>
+            <option value="Deutsch">{t.languageFilterOptions.german}</option>
+            <option value="Sprachbrücke">
+              {t.languageFilterOptions.bridge}
+            </option>
           </select>
         </div>
 
@@ -1192,7 +1244,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                     ))}
                   </span>
                 )}
-                <span>{opt.label}</span>
+                <span>{c.areaFilters[opt.value]}</span>
               </button>
             );
           })}
@@ -1202,7 +1254,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
         {filteredModules.length === 0 ? (
           <div className="border border-dashed border-slate-300 rounded-xl p-5 text-center bg-slate-50/70">
             <p className="text-sm font-medium text-slate-800">
-              Keine passenden Module gefunden.
+              {t.noModulesFound}
             </p>
             <button
               type="button"
@@ -1213,7 +1265,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
               }}
               className="mt-2 px-3 py-1.5 text-xs font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors"
             >
-              Filter zurücksetzen
+              {t.resetFilters}
             </button>
           </div>
         ) : (
@@ -1221,7 +1273,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
             {filteredModules.map((mod) => {
               const isSelected = selectedModuleIds.includes(mod.id);
               const conflict = wouldConflict(mod);
-              const timeSummary = formatModuleTimeSummary(mod);
+              const timeSummary = formatLocalizedScheduleSummary(
+                mod,
+                language
+              );
               const theme = getModuleColorTheme(mod);
 
               return (
@@ -1236,7 +1291,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                       openModuleDetail(mod);
                     }
                   }}
-                  aria-label={`${mod.code} ${mod.title} – Details anzeigen und bearbeiten`}
+                  aria-label={t.moduleAriaLabel(mod.code, mod.title)}
                   className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-4 py-3 rounded-lg border border-slate-200 cursor-pointer transition-colors ${
                     theme.cardBorderTopClass
                   } ${
@@ -1246,6 +1301,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-baseline gap-2">
                       <span
+                        dir="ltr"
                         className={`font-mono text-xs font-bold ${theme.textClass}`}
                       >
                         {mod.code}
@@ -1253,12 +1309,15 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                       <span className="text-sm font-semibold text-slate-900">
                         {mod.title}
                       </span>
-                      <span className="font-mono text-xs text-slate-600 tabular-nums">
+                      <span
+                        dir="ltr"
+                        className="font-mono text-xs text-slate-600 tabular-nums"
+                      >
                         {mod.cp} ECTS
                       </span>
                       {mod.isCustom && (
                         <span className="text-[11px] font-medium text-teal-800">
-                          · Eigenes Modul
+                          · {t.customModuleBadge}
                         </span>
                       )}
                     </div>
@@ -1271,12 +1330,14 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                           aria-hidden="true"
                           className={`w-2 h-2 rounded-[2px] shrink-0 ${theme.swatchClass}`}
                         />
-                        <span>{mod.area}</span>
+                        <span>{c.areas[mod.area]}</span>
                       </span>
                       <span aria-hidden="true">·</span>
                       <span>{timeSummary}</span>
                       <span aria-hidden="true">·</span>
-                      <span>{mod.language}</span>
+                      <span>
+                        {c.teachingLanguages[mod.language] ?? mod.language}
+                      </span>
                       {mod.ecampusLanguageMismatch && (
                         <>
                           <span aria-hidden="true">·</span>
@@ -1285,7 +1346,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                             className="inline-flex items-center gap-1 text-teal-800 font-medium"
                           >
                             <Languages className="w-3 h-3" />
-                            <span>Sprachbrücke</span>
+                            <span>{t.languageBridgeBadge}</span>
                           </span>
                         </>
                       )}
@@ -1293,7 +1354,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         <>
                           <span aria-hidden="true">·</span>
                           <span className="text-[#ff8000] font-semibold">
-                            Zeitüberschneidung
+                            {t.conflictBadge}
                           </span>
                         </>
                       )}
@@ -1308,7 +1369,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                           e.stopPropagation();
                           onDeleteCustomModule(mod.id);
                         }}
-                        title={`${mod.title} löschen`}
+                        title={t.deleteCustomTitle(mod.title)}
                         className="inline-flex items-center justify-center p-1.5 text-slate-400 hover:text-red-600 bg-white hover:bg-red-50 border border-slate-200 rounded-lg transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -1330,12 +1391,12 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                       {isSelected ? (
                         <>
                           <Check className="w-3.5 h-3.5" />
-                          <span>Ausgewählt</span>
+                          <span>{t.selectedBtn}</span>
                         </>
                       ) : (
                         <>
                           <Plus className="w-3.5 h-3.5" />
-                          <span>Hinzufügen</span>
+                          <span>{t.addBtn}</span>
                         </>
                       )}
                     </button>
@@ -1372,15 +1433,21 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className={`font-mono font-bold ${theme.textClass}`}>
+                      <span
+                        dir="ltr"
+                        className={`font-mono font-bold ${theme.textClass}`}
+                      >
                         {detailModule.code}
                       </span>
                       <span className="text-slate-400">·</span>
                       <span className={`font-semibold ${theme.textClass}`}>
-                        {detailModule.area}
+                        {c.areas[detailModule.area]}
                       </span>
                       <span className="text-slate-400">·</span>
-                      <span className="font-mono font-semibold text-slate-700 tabular-nums">
+                      <span
+                        dir="ltr"
+                        className="font-mono font-semibold text-slate-700 tabular-nums"
+                      >
                         {detailModule.cp} ECTS
                       </span>
                     </div>
@@ -1395,7 +1462,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   <button
                     type="button"
                     onClick={() => setDetailModuleId(null)}
-                    aria-label="Detailansicht schließen"
+                    aria-label={t.detailModal.closeAria}
                     className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white/70 transition-colors shrink-0"
                   >
                     <X className="w-4 h-4" />
@@ -1411,10 +1478,10 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                   <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 space-y-2">
                     <div className="flex items-center gap-1.5 text-xs font-semibold text-teal-800">
                       <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                      <span>Kurzvorstellung des Moduls</span>
+                      <span>{t.detailModal.introHeading}</span>
                     </div>
                     <p className="text-xs text-slate-700 leading-relaxed">
-                      {getModuleIntroduction(detailModule)}
+                      {getLocalizedModuleIntroduction(detailModule, language)}
                     </p>
                     {detailModule.learningGoals.length > 0 && (
                       <div className="flex flex-wrap gap-1.5 pt-1">
@@ -1430,7 +1497,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                     )}
                     <p className="text-[11px] text-slate-500 pt-0.5">
                       <strong className="font-medium text-slate-700">
-                        Hinweis / Voraussetzung:
+                        {t.detailModal.prerequisiteLabel}
                       </strong>{" "}
                       {detailModule.officialPrerequisite}
                     </p>
@@ -1441,7 +1508,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
                         <Pencil className="w-3.5 h-3.5 text-teal-700 shrink-0" />
-                        <span>Termine, Uhrzeiten &amp; Infos anpassen</span>
+                        <span>{t.detailModal.editSectionHeading}</span>
                       </div>
 
                       <button
@@ -1450,7 +1517,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors whitespace-nowrap"
                       >
                         <Plus className="w-3 h-3" />
-                        <span>Übung / Tutorium hinzufügen</span>
+                        <span>{t.detailModal.addSlotBtn}</span>
                       </button>
                     </div>
 
@@ -1460,7 +1527,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                       </p>
                     )}
 
-                    {/* Terminliste (Vorlesung, Übung, Tutorium, Seminar mit freier Uhrzeit) */}
+                    {/* Terminliste */}
                     <div className="space-y-2.5">
                       {detailSlots.map((slot, idx) => (
                         <div
@@ -1473,11 +1540,16 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
-                              <span className="text-[11px] font-mono text-slate-500">
+                              <span
+                                dir="ltr"
+                                className="text-[11px] font-mono text-slate-500"
+                              >
                                 #{idx + 1}
                               </span>
                               <select
-                                aria-label={`Veranstaltungsart für Termin ${idx + 1}`}
+                                aria-label={t.detailModal.sessionTypeAria(
+                                  idx + 1
+                                )}
                                 value={slot.sessionType}
                                 onChange={(e) =>
                                   handleUpdateDetailSlot(slot.id, {
@@ -1488,12 +1560,12 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                               >
                                 {SESSION_TYPES.map((typeOption) => (
                                   <option key={typeOption} value={typeOption}>
-                                    {typeOption}
+                                    {c.sessionTypes[typeOption]}
                                   </option>
                                 ))}
                                 {slot.sessionType === "Übung / Lab" && (
                                   <option value="Übung / Lab">
-                                    Übung / Lab
+                                    {c.sessionTypes["Übung / Lab"]}
                                   </option>
                                 )}
                               </select>
@@ -1511,7 +1583,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                   }
                                   className="rounded border-slate-300 text-teal-700 focus:ring-teal-700"
                                 />
-                                <span>Im Stundenplan</span>
+                                <span>{t.detailModal.inTimetableLabel}</span>
                               </label>
 
                               <button
@@ -1519,8 +1591,8 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                 onClick={() => handleRemoveDetailSlot(slot.id)}
                                 title={
                                   detailSlots.length > 1
-                                    ? "Termin entfernen"
-                                    : "Termin zurücksetzen"
+                                    ? t.detailModal.removeSlotTitle
+                                    : t.detailModal.resetSlotTitle
                                 }
                                 className="p-1 text-slate-400 hover:text-red-600 rounded transition-colors"
                               >
@@ -1535,7 +1607,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                 htmlFor={`detail-day-${slot.id}`}
                                 className="block text-[11px] font-medium text-slate-700 mb-1"
                               >
-                                Wochentag
+                                {t.detailModal.weekdayLabel}
                               </label>
                               <select
                                 id={`detail-day-${slot.id}`}
@@ -1547,10 +1619,12 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                 }
                                 className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                               >
-                                <option value="">Keine Angabe</option>
+                                <option value="">
+                                  {t.customForm.noDayOption}
+                                </option>
                                 {WEEKDAYS.map((d) => (
                                   <option key={d} value={d}>
-                                    {d}
+                                    {c.weekdays[d]}
                                   </option>
                                 ))}
                               </select>
@@ -1561,7 +1635,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                 htmlFor={`detail-start-${slot.id}`}
                                 className="block text-[11px] font-medium text-slate-700 mb-1"
                               >
-                                Beginn
+                                {t.detailModal.startLabel}
                               </label>
                               <input
                                 id={`detail-start-${slot.id}`}
@@ -1581,7 +1655,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                 htmlFor={`detail-end-${slot.id}`}
                                 className="block text-[11px] font-medium text-slate-700 mb-1"
                               >
-                                Ende
+                                {t.detailModal.endLabel}
                               </label>
                               <input
                                 id={`detail-end-${slot.id}`}
@@ -1601,7 +1675,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                 htmlFor={`detail-room-${slot.id}`}
                                 className="block text-[11px] font-medium text-slate-700 mb-1"
                               >
-                                Raum / Ort
+                                {t.detailModal.roomLabel}
                               </label>
                               <input
                                 id={`detail-room-${slot.id}`}
@@ -1612,7 +1686,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                                     room: e.target.value,
                                   })
                                 }
-                                placeholder="z. B. R 0210"
+                                placeholder={t.detailModal.roomPlaceholder}
                                 className="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                               />
                             </div>
@@ -1621,27 +1695,24 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                       ))}
 
                       <p className="text-[11px] text-slate-500">
-                        Tipp: Uhrzeiten sind frei wählbar. Über „Im Stundenplan“
-                        wählst du aus, ob ein Termin (z. B. Übung oder
-                        Tutorium) im Wochenplan erscheint.
+                        {t.detailModal.slotTip}
                       </p>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-
                       <div className="sm:col-span-6">
                         <label
                           htmlFor="detail-exam-type"
                           className="block text-[11px] font-medium text-slate-700 mb-1"
                         >
-                          Prüfungsform
+                          {t.detailModal.examTypeLabel}
                         </label>
                         <input
                           id="detail-exam-type"
                           type="text"
                           value={detailExamType}
                           onChange={(e) => setDetailExamType(e.target.value)}
-                          placeholder="z. B. Klausur (90 Min.) oder Hausarbeit"
+                          placeholder={t.customForm.examTypePlaceholder}
                           className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                         />
                       </div>
@@ -1651,7 +1722,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                           htmlFor="detail-exam-date"
                           className="block text-[11px] font-medium text-slate-700 mb-1"
                         >
-                          Prüfungstermin &amp; Raum
+                          {t.detailModal.examDateLabel}
                         </label>
                         <input
                           id="detail-exam-date"
@@ -1660,7 +1731,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                           onChange={(e) =>
                             setDetailExamDateRoom(e.target.value)
                           }
-                          placeholder="z. B. 18.02.2027, 10:00 · HS 1"
+                          placeholder={t.customForm.examDatePlaceholder}
                           className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none"
                         />
                       </div>
@@ -1670,7 +1741,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                           htmlFor="detail-lang"
                           className="block text-[11px] font-medium text-slate-700 mb-1"
                         >
-                          Unterrichtssprache
+                          {t.detailModal.teachingLangLabel}
                         </label>
                         <select
                           id="detail-lang"
@@ -1684,7 +1755,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         >
                           {CUSTOM_LANGUAGES.map((lang) => (
                             <option key={lang} value={lang}>
-                              {lang}
+                              {c.teachingLanguages[lang]}
                             </option>
                           ))}
                         </select>
@@ -1695,15 +1766,13 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                           htmlFor="detail-desc"
                           className="block text-[11px] font-medium text-slate-700 mb-1"
                         >
-                          Kurzvorstellung / Notiz anpassen
+                          {t.detailModal.notesLabel}
                         </label>
                         <textarea
                           id="detail-desc"
                           rows={3}
                           value={detailDescription}
-                          onChange={(e) =>
-                            setDetailDescription(e.target.value)
-                          }
+                          onChange={(e) => setDetailDescription(e.target.value)}
                           className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-900 focus:border-teal-700 focus:outline-none resize-y"
                         />
                       </div>
@@ -1725,12 +1794,12 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         {isSelected ? (
                           <>
                             <Check className="w-3.5 h-3.5" />
-                            <span>Ausgewählt</span>
+                            <span>{t.selectedBtn}</span>
                           </>
                         ) : (
                           <>
                             <Plus className="w-3.5 h-3.5" />
-                            <span>Hinzufügen</span>
+                            <span>{t.addBtn}</span>
                           </>
                         )}
                       </button>
@@ -1742,7 +1811,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors"
                         >
                           <RotateCcw className="w-3.5 h-3.5" />
-                          <span>Zurücksetzen</span>
+                          <span>{t.detailModal.resetBtn}</span>
                         </button>
                       )}
                     </div>
@@ -1753,14 +1822,14 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
                         onClick={() => setDetailModuleId(null)}
                         className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors"
                       >
-                        Abbrechen
+                        {t.cancel}
                       </button>
                       <button
                         type="submit"
                         className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors"
                       >
                         <Check className="w-3.5 h-3.5" />
-                        <span>Änderungen speichern</span>
+                        <span>{t.detailModal.saveChangesBtn}</span>
                       </button>
                     </div>
                   </div>

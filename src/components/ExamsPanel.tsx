@@ -12,17 +12,17 @@ import {
   Lock,
   Square,
 } from "lucide-react";
+import type { DitModule, SemesterId } from "../data/ditCatalog";
+import type { AppLanguage, UserProfile } from "../types/userProfile";
 import {
-  SEMESTER_INFOS,
-  formatModuleScheduleSummary,
-  type DitModule,
-  type SemesterId,
-} from "../data/ditCatalog";
-import type { UserProfile } from "../types/userProfile";
+  formatLocalizedScheduleSummary,
+  getTranslations,
+} from "../i18n/translations";
 import { exportExamsPdf } from "../utils/pdfExport";
 
 interface ExamsPanelProps {
   activeSemester: SemesterId;
+  language?: AppLanguage;
   allModules: DitModule[];
   selectedModuleIds: string[];
   completedMakeupIds: string[];
@@ -39,12 +39,9 @@ interface ExamsPanelProps {
   onGoToTimetable: () => void;
 }
 
-function getModuleCourseTimeRoom(mod: DitModule): string {
-  return formatModuleScheduleSummary(mod);
-}
-
 export const ExamsPanel: React.FC<ExamsPanelProps> = ({
   activeSemester,
+  language = "de",
   allModules,
   selectedModuleIds,
   completedMakeupIds,
@@ -60,7 +57,10 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
   onJumpToCurrentSemester,
   onGoToTimetable,
 }) => {
-  const semesterInfo = SEMESTER_INFOS[activeSemester];
+  const tr = getTranslations(language);
+  const t = tr.exams;
+  const c = tr.catalog;
+  const semesterInfo = c.semesters[activeSemester];
 
   const selectedModules = useMemo(
     () =>
@@ -87,24 +87,23 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
     <div className="space-y-6">
       {/* 1. ECTS-Tracker (Top of Prüfungen) */}
       <section
-        aria-label="ECTS-Tracker"
+        aria-label={t.trackerAria}
         className="rounded-xl border border-slate-200 bg-white p-4 space-y-3.5"
       >
         <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2">
           <div>
             <h2 className="text-base font-bold tracking-tight text-teal-800">
-              ECTS-Tracker
+              {t.trackerTitle}
             </h2>
             <p className="text-xs text-slate-600 mt-0.5">
-              Digital Innovation &amp; Transformation · Universität Kassel (FB 07) ·{" "}
-              {semesterInfo.studySemesterLabel}
+              {t.trackerSubtitle(semesterInfo.studySemesterLabel)}
             </p>
           </div>
-          <div className="text-left sm:text-right shrink-0 tabular-nums">
-            <span className="font-mono text-sm font-bold text-teal-800">
+          <div className="text-start sm:text-end shrink-0 tabular-nums">
+            <span dir="ltr" className="font-mono text-sm font-bold text-teal-800">
               {totalMasterCp} / 120 ECTS
             </span>{" "}
-            <span className="text-xs text-slate-500">
+            <span dir="ltr" className="text-xs text-slate-500">
               ({masterProgressPct}%)
             </span>
           </div>
@@ -116,7 +115,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
           aria-valuenow={totalMasterCp}
           aria-valuemin={0}
           aria-valuemax={120}
-          aria-label="Fortschritt im Master DIT in ECTS"
+          aria-label={t.progressAria}
         >
           <div
             className="h-full bg-teal-700 transition-all duration-300"
@@ -126,16 +125,22 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
 
         <div className="grid grid-cols-3 gap-2.5 text-xs tabular-nums">
           <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
-            <div className="text-slate-500 truncate">Gesammelt</div>
-            <div className="font-mono text-sm font-bold text-slate-900 mt-0.5">
+            <div className="text-slate-500 truncate">{t.collected}</div>
+            <div
+              dir="ltr"
+              className="font-mono text-sm font-bold text-slate-900 mt-0.5 text-start"
+            >
               {wiseCompletedCp} ECTS
             </div>
           </div>
           <div className="rounded-lg border border-teal-200 bg-teal-50/50 px-3 py-2">
             <div className="text-teal-800 font-medium truncate">
-              Geplant ({semesterInfo.shortLabel})
+              {t.planned(semesterInfo.shortLabel)}
             </div>
-            <div className="font-mono text-sm font-bold text-teal-900 mt-0.5">
+            <div
+              dir="ltr"
+              className="font-mono text-sm font-bold text-teal-900 mt-0.5 text-start"
+            >
               {currentSemesterRegularCp} / {targetSemesterEcts} ECTS{" "}
               <span className="font-sans font-normal text-[11px] text-teal-700">
                 ({semesterProgressPct}%)
@@ -143,8 +148,11 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
             </div>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
-            <div className="text-slate-500 truncate">Noch offen</div>
-            <div className="font-mono text-sm font-bold text-slate-900 mt-0.5">
+            <div className="text-slate-500 truncate">{t.remaining}</div>
+            <div
+              dir="ltr"
+              className="font-mono text-sm font-bold text-slate-900 mt-0.5 text-start"
+            >
               {Math.max(0, 120 - totalMasterCp)} ECTS
             </div>
           </div>
@@ -157,15 +165,20 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
             <span>
               {activeSemester === "wise2627" ? (
                 <>
-                  <strong className="text-[#ff8000]">Aktuelles Semester:</strong>{" "}
-                  Alle Angaben gelten für das{" "}
-                  <strong>Wintersemester 2026/27</strong>.
+                  <strong className="text-[#ff8000]">
+                    {t.currentSemesterLead}
+                  </strong>{" "}
+                  {t.currentSemesterTextPrefix}{" "}
+                  <strong>{t.currentSemesterName}</strong>.
                 </>
               ) : (
                 <>
-                  <strong className="text-teal-900">Nächstes Semester:</strong>{" "}
-                  Planung für <strong>Sommersemester 2027</strong> (
-                  {wiseCompletedCp} ECTS aus WiSe übernommen).
+                  <strong className="text-teal-900">
+                    {t.nextSemesterLead}
+                  </strong>{" "}
+                  {t.nextSemesterTextPrefix}{" "}
+                  <strong>{t.nextSemesterName}</strong>{" "}
+                  {t.nextSemesterCarriedOver(wiseCompletedCp)}
                 </>
               )}
             </span>
@@ -186,12 +199,12 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                   {lastExamFinished ? (
                     <>
                       <CheckCircle2 className="w-3.5 h-3.5 text-teal-700" />
-                      <span>Letzte Prüfung beendet</span>
+                      <span>{t.lastExamFinished}</span>
                     </>
                   ) : (
                     <>
                       <Square className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Prüfungsende bestätigen</span>
+                      <span>{t.confirmLastExam}</span>
                     </>
                   )}
                 </button>
@@ -207,7 +220,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                   }`}
                 >
                   {!lastExamFinished && <Lock className="w-3.5 h-3.5" />}
-                  <span>SoSe 2027</span>
+                  <span dir="ltr">SoSe 2027</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </>
@@ -218,7 +231,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors whitespace-nowrap"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Zurück zu WiSe 2026/27</span>
+                <span>{t.backToWise}</span>
               </button>
             )}
           </div>
@@ -230,16 +243,18 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-teal-800">
-              Prüfungen der gewählten Module ({semesterInfo.shortLabel})
+              {t.selectedExamsHeading(semesterInfo.shortLabel)}
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Es werden ausschließlich deine im Stundenplan ausgewählten Module angezeigt.
+              {t.selectedExamsSubheading}
             </p>
           </div>
           <div className="flex items-center gap-2.5 shrink-0">
             <span className="text-xs text-slate-500 tabular-nums">
               {selectedModules.length}{" "}
-              {selectedModules.length === 1 ? "Modul" : "Module"}
+              {selectedModules.length === 1
+                ? t.moduleSingular
+                : t.modulePlural}
             </span>
             <button
               type="button"
@@ -253,18 +268,19 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                   totalMasterCp,
                   targetSemesterEcts,
                   userProfile,
+                  language,
                 })
               }
               disabled={selectedModules.length === 0}
               title={
                 selectedModules.length === 0
-                  ? "Wähle zuerst mindestens ein Modul im Stundenplan aus"
-                  : "Prüfungsübersicht als PDF herunterladen"
+                  ? t.savePdfDisabledTitle
+                  : t.savePdfTitle
               }
               className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-600/35 hover:border-teal-700 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 disabled:pointer-events-none"
             >
               <FileDown className="w-3.5 h-3.5" />
-              <span>Als PDF speichern</span>
+              <span>{t.savePdf}</span>
             </button>
           </div>
         </div>
@@ -272,18 +288,16 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
         {selectedModules.length === 0 ? (
           <div className="border border-dashed border-slate-300 rounded-xl p-6 text-center bg-slate-50/70">
             <p className="text-sm font-medium text-slate-800 mb-1">
-              Keine Module im Stundenplan ausgewählt
+              {t.emptyTitle}
             </p>
-            <p className="text-xs text-slate-500 mb-3">
-              Wähle im Tab „Stundenplan“ Module aus, um ihre Prüfungsinfos zu sehen.
-            </p>
+            <p className="text-xs text-slate-500 mb-3">{t.emptySubtitle}</p>
             <button
               type="button"
               onClick={onGoToTimetable}
               className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors"
             >
               <CalendarDays className="w-3.5 h-3.5" />
-              <span>Zum Stundenplan</span>
+              <span>{t.goToTimetable}</span>
             </button>
           </div>
         ) : (
@@ -291,8 +305,12 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
             {selectedModules.map((mod) => {
               const isMakeup = mod.area === "Auflagen";
               const isMakeupDone = completedMakeupIds.includes(mod.id);
-              const courseTimeRoom = getModuleCourseTimeRoom(mod);
-              const examDateRoom = mod.customExamDateRoom || "Zeit/Raum fehlt";
+              const courseTimeRoom = formatLocalizedScheduleSummary(
+                mod,
+                language
+              );
+              const examDateRoom =
+                mod.customExamDateRoom || t.missingDateRoom;
 
               return (
                 <div
@@ -302,6 +320,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex flex-wrap items-baseline gap-2 min-w-0">
                       <span
+                        dir="ltr"
                         className={`font-mono text-xs font-semibold ${
                           isMakeup ? "text-[#ff8000]" : "text-teal-700"
                         }`}
@@ -311,11 +330,14 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                       <span className="text-sm font-semibold text-slate-900">
                         {mod.title}
                       </span>
-                      <span className="font-mono text-xs text-slate-500 tabular-nums">
+                      <span
+                        dir="ltr"
+                        className="font-mono text-xs text-slate-500 tabular-nums"
+                      >
                         {mod.cp} ECTS
                       </span>
                       <span className="text-xs text-slate-500">
-                        · {mod.area}
+                        · {c.areas[mod.area]}
                       </span>
                     </div>
 
@@ -330,7 +352,9 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                         }`}
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>{isMakeupDone ? "Bestanden" : "Offen"}</span>
+                        <span>
+                          {isMakeupDone ? t.makeupDone : t.makeupOpen}
+                        </span>
                       </button>
                     )}
                   </div>
@@ -340,7 +364,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                       <FileText className="w-3.5 h-3.5 text-teal-700 shrink-0 mt-0.5" />
                       <span>
                         <strong className="text-slate-700 font-medium">
-                          Prüfungsform:
+                          {t.examTypeLabel}
                         </strong>{" "}
                         {mod.examType}
                       </span>
@@ -350,11 +374,11 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                       <Calendar className="w-3.5 h-3.5 text-teal-700 shrink-0 mt-0.5" />
                       <span>
                         <strong className="text-slate-700 font-medium">
-                          Prüfungstermin/Raum:
+                          {t.examDateRoomLabel}
                         </strong>{" "}
                         <span
                           className={
-                            examDateRoom === "Zeit/Raum fehlt"
+                            !mod.customExamDateRoom
                               ? "text-slate-500"
                               : "text-slate-900 font-medium"
                           }
@@ -368,7 +392,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
                       <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
                       <span>
                         <strong className="text-slate-700 font-medium">
-                          Lehrveranstaltung:
+                          {t.courseScheduleLabel}
                         </strong>{" "}
                         {courseTimeRoom}
                       </span>

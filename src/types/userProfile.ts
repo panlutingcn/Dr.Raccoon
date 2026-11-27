@@ -15,7 +15,22 @@ export type CurrentStudySemester = 1 | 2 | 3 | 4;
 
 export type WorkloadPreference = "relaxed" | "standard" | "intensive";
 
+export type AppLanguage = "de" | "en" | "fa" | "fr" | "zh";
+
+export const APP_LANGUAGE_OPTIONS: Array<{
+  value: AppLanguage;
+  nativeLabel: string;
+  englishName: string;
+}> = [
+  { value: "de", nativeLabel: "Deutsch", englishName: "German" },
+  { value: "en", nativeLabel: "English", englishName: "English" },
+  { value: "fa", nativeLabel: "فارسی", englishName: "Persian" },
+  { value: "fr", nativeLabel: "Français", englishName: "French" },
+  { value: "zh", nativeLabel: "中文", englishName: "Chinese" },
+];
+
 export interface UserProfile {
+  language?: AppLanguage;
   bachelorBackground: BachelorBackground;
   customBachelorProgram?: string;
   masterProfile: MasterProfileChoice;
@@ -131,6 +146,7 @@ export const WORKLOAD_PREFERENCE_OPTIONS: Array<{
 ];
 
 export const DEFAULT_USER_PROFILE_DRAFT: UserProfile = {
+  language: "de",
   bachelorBackground: "wirtschaftsinformatik",
   customBachelorProgram: "",
   masterProfile: "undecided",
@@ -139,6 +155,12 @@ export const DEFAULT_USER_PROFILE_DRAFT: UserProfile = {
   jobHoursPerWeek: 0,
   workloadPreference: "standard",
 };
+
+export function sanitizeAppLanguage(raw: unknown): AppLanguage {
+  return APP_LANGUAGE_OPTIONS.some((o) => o.value === raw)
+    ? (raw as AppLanguage)
+    : "de";
+}
 
 export function getTargetEctsForProfile(profile: UserProfile | null): number {
   if (!profile) return 30;
@@ -207,7 +229,10 @@ export function sanitizeUserProfile(raw: unknown): UserProfile | null {
       ? obj.customBachelorProgram.trim().slice(0, 120)
       : mappedLegacyCustom;
 
+  const validLanguage = sanitizeAppLanguage(obj.language);
+
   return {
+    language: validLanguage,
     bachelorBackground: validBachelor,
     ...(rawCustomProgram ? { customBachelorProgram: rawCustomProgram } : {}),
     masterProfile: validProfile,
@@ -285,6 +310,7 @@ export function buildUserProfileContextJson(profile: UserProfile | null): string
   return JSON.stringify(
     {
       profileConfigured: true,
+      language: sanitizeAppLanguage(profile.language),
       bachelorBackground: profile.bachelorBackground,
       bachelorBackgroundLabel: bachelorOpt.label,
       customBachelorProgram:

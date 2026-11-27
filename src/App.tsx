@@ -6,16 +6,21 @@ import { ProfileModal } from "./components/ProfileModal";
 import { TimetablePanel } from "./components/TimetablePanel";
 import {
   DIT_MODULES,
-  SEMESTER_INFOS,
   type DitModule,
   type SemesterId,
 } from "./data/ditCatalog";
 import {
-  getProfileDisplayParts,
   getTargetEctsForProfile,
+  sanitizeAppLanguage,
   sanitizeUserProfile,
+  type AppLanguage,
   type UserProfile,
 } from "./types/userProfile";
+import {
+  getLanguageDirection,
+  getLocalizedProfileDisplayParts,
+  getTranslations,
+} from "./i18n/translations";
 
 type DashboardTab = "timetable" | "exams";
 
@@ -181,16 +186,23 @@ export default function App() {
     };
   }, []);
 
+  const appLanguage: AppLanguage = sanitizeAppLanguage(userProfile?.language);
+  const tr = getTranslations(appLanguage);
+
+  useEffect(() => {
+    document.documentElement.lang = appLanguage;
+    document.documentElement.dir = getLanguageDirection(appLanguage);
+  }, [appLanguage]);
+
   useEffect(() => {
     if (activeSection === "timetable") {
-      document.title = "Stundenplan · Dr. Raccoon (Master DIT, Uni Kassel)";
+      document.title = tr.documentTitle.timetable;
     } else if (activeSection === "exams") {
-      document.title =
-        "Prüfungsübersicht · Dr. Raccoon (Master DIT, Uni Kassel)";
+      document.title = tr.documentTitle.exams;
     } else {
-      document.title = "Dr. Raccoon · Master DIT, Uni Kassel";
+      document.title = tr.documentTitle.base;
     }
-  }, [activeSection]);
+  }, [activeSection, tr]);
 
   useEffect(() => {
     try {
@@ -397,12 +409,18 @@ export default function App() {
       : 0;
 
   const totalMasterCp = wiseCompletedCp + currentSemesterRegularCp;
-  const semesterInfo = SEMESTER_INFOS[activeSemester];
+  const semesterInfo = tr.catalog.semesters[activeSemester];
+  const isCurrentSemester = activeSemester === "wise2627";
   const targetSemesterEcts = getTargetEctsForProfile(userProfile);
-  const profileDisplay = userProfile ? getProfileDisplayParts(userProfile) : null;
+  const profileDisplay = userProfile
+    ? getLocalizedProfileDisplayParts(userProfile, appLanguage)
+    : null;
 
   return (
-    <div className="min-h-screen flex flex-col bg-teal-700 text-slate-900">
+    <div
+      dir={getLanguageDirection(appLanguage)}
+      className="min-h-screen flex flex-col bg-teal-700 text-slate-900"
+    >
       {/* Top Navigation Bar (seamless at top, subtle shadow once scrolled) */}
       <header
         className={`fixed top-0 inset-x-0 z-40 bg-white transition-shadow duration-200 ${
@@ -419,7 +437,7 @@ export default function App() {
                 e.preventDefault();
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
-              aria-label="Dr. Raccoon – Startseite"
+              aria-label={tr.nav.homeAria}
               className="flex items-center shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 rounded-md"
             >
               <img
@@ -432,8 +450,8 @@ export default function App() {
           </div>
 
           <nav
-            aria-label="Hauptnavigation"
-            className="flex flex-1 items-center justify-end gap-3 sm:gap-6 min-w-0 pr-[14px] sm:pr-0"
+            aria-label={tr.nav.mainNavAria}
+            className="flex flex-1 items-center justify-end gap-3 sm:gap-6 min-w-0 pe-[14px] sm:pe-0"
           >
             <div className="flex items-center gap-2.5 sm:gap-5">
               <button
@@ -445,7 +463,7 @@ export default function App() {
                     : "text-slate-600 font-medium"
                 }`}
               >
-                Stundenplan
+                {tr.nav.timetable}
               </button>
 
               <button
@@ -457,7 +475,7 @@ export default function App() {
                     : "text-slate-600 font-medium"
                 }`}
               >
-                Prüfungsübersicht
+                {tr.nav.exams}
               </button>
             </div>
 
@@ -465,8 +483,8 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowProfileModal(true)}
-                title="Profil bearbeiten"
-                aria-label={`Profil bearbeiten: ${profileDisplay.buttonSummary}`}
+                title={tr.nav.editProfileTitle}
+                aria-label={`${tr.nav.editProfileAriaPrefix}: ${profileDisplay.buttonSummary}`}
                 className="hidden lg:inline-flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-lg border text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 bg-teal-50 text-teal-900 border-teal-300 hover:bg-teal-100"
               >
                 <span aria-hidden="true" className="shrink-0">
@@ -491,6 +509,7 @@ export default function App() {
           <div>
             <AdvisorChat
               activeSemester={activeSemester}
+              language={appLanguage}
               allModules={allModules}
               selectedModuleIds={selectedModuleIds}
               completedMakeupIds={completedMakeupIds}
@@ -512,8 +531,11 @@ export default function App() {
             >
               <ArrowDown className="w-3.5 h-3.5 text-[#F8DAC5] group-hover:translate-y-0.5 transition-transform" />
               <span>
-                Semesterplanung &amp; Kurswahl ({semesterInfo.shortLabel}) ·{" "}
-                <span className="tabular-nums font-semibold text-white">
+                {tr.bridge.label(semesterInfo.shortLabel)} ·{" "}
+                <span
+                  dir="ltr"
+                  className="inline-block tabular-nums font-semibold text-white"
+                >
                   {currentSemesterRegularCp} / {targetSemesterEcts} ECTS
                 </span>
               </span>
@@ -525,27 +547,28 @@ export default function App() {
           <div>
             <section
               ref={timetableSectionRef}
-              aria-label="Stundenplan"
+              aria-label={tr.nav.timetable}
               className="scroll-mt-[68px] sm:scroll-mt-[76px] bg-white rounded-2xl overflow-hidden shadow-lg shadow-teal-950/20"
             >
               <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3.5 bg-slate-50/70 border-b border-slate-200 text-slate-900">
                 <div className="flex items-center gap-2 min-w-0">
                   <CalendarDays className="w-4 h-4 text-teal-700 shrink-0" />
                   <h1 className="text-sm sm:text-base font-bold tracking-tight text-teal-900 truncate">
-                    Stundenplan · {semesterInfo.shortLabel}
+                    {tr.sections.timetableTitle(semesterInfo.shortLabel)}
                   </h1>
                 </div>
 
                 <span className="text-xs font-medium text-slate-500 whitespace-nowrap shrink-0">
-                  {semesterInfo.isCurrent
-                    ? "Aktuelles Semester"
-                    : "Nächstes Semester"}
+                  {isCurrentSemester
+                    ? tr.sections.currentSemesterBadge
+                    : tr.sections.nextSemesterBadge}
                 </span>
               </div>
 
               <div className="p-4 sm:p-5">
                 <TimetablePanel
                   activeSemester={activeSemester}
+                  language={appLanguage}
                   allModules={allModules}
                   selectedModuleIds={selectedModuleIds}
                   moduleOverrides={moduleOverrides}
@@ -566,27 +589,28 @@ export default function App() {
           <div>
             <section
               ref={examsSectionRef}
-              aria-label="Prüfungsübersicht"
+              aria-label={tr.nav.exams}
               className="scroll-mt-[68px] sm:scroll-mt-[76px] bg-white rounded-2xl overflow-hidden shadow-lg shadow-teal-950/20"
             >
               <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3.5 bg-slate-50/70 border-b border-slate-200 text-slate-900">
                 <div className="flex items-center gap-2 min-w-0">
                   <Compass className="w-4 h-4 text-teal-700 shrink-0" />
                   <h2 className="text-sm sm:text-base font-bold tracking-tight text-teal-900 truncate">
-                    Prüfungsübersicht · {semesterInfo.shortLabel}
+                    {tr.sections.examsTitle(semesterInfo.shortLabel)}
                   </h2>
                 </div>
 
                 <span className="text-xs font-medium text-slate-500 whitespace-nowrap shrink-0">
-                  {semesterInfo.isCurrent
-                    ? "Aktuelles Semester"
-                    : "Nächstes Semester"}
+                  {isCurrentSemester
+                    ? tr.sections.currentSemesterBadge
+                    : tr.sections.nextSemesterBadge}
                 </span>
               </div>
 
               <div className="p-4 sm:p-5">
                 <ExamsPanel
                   activeSemester={activeSemester}
+                  language={appLanguage}
                   allModules={allModules}
                   selectedModuleIds={selectedModuleIds}
                   completedMakeupIds={completedMakeupIds}
@@ -616,20 +640,18 @@ export default function App() {
             {/* Column 1: About & Module Context */}
             <div className="md:col-span-5 space-y-2.5">
               <div className="flex items-baseline gap-2.5">
-                <span className="font-logo text-xl text-teal-700">
+                <span dir="ltr" className="font-logo text-xl text-teal-700">
                   Dr. Raccoon
                 </span>
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  KI-Studienberatung
+                  {tr.footer.aboutHeading}
                 </span>
               </div>
               <p className="text-xs leading-relaxed text-slate-600 max-w-sm">
-                Digitale Semesterplanung, Modulauswahl und Prüfungsübersicht für
-                den Masterstudiengang Digitale Innovation und Transformation an
-                der Universität Kassel.
+                {tr.footer.description}
               </p>
               <p className="pt-1 text-xs font-semibold text-teal-800">
-                Modul: Prompt Engineering · Universität Kassel
+                {tr.footer.moduleContext}
               </p>
             </div>
 
@@ -643,7 +665,7 @@ export default function App() {
                   {"\u200B"}
                 </span>
                 <h2 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Offizielle Unterlagen (FB 07)
+                  {tr.footer.docsHeading}
                 </h2>
               </div>
               <ul className="space-y-2 text-xs text-slate-700">
@@ -654,7 +676,7 @@ export default function App() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 hover:text-teal-700 hover:underline underline-offset-2 transition-colors"
                   >
-                    <span>Studienverlaufsplan (WiSe 2026/27)</span>
+                    <span>{tr.footer.docLinks.svp}</span>
                     <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
                   </a>
                 </li>
@@ -665,7 +687,7 @@ export default function App() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 hover:text-teal-700 hover:underline underline-offset-2 transition-colors"
                   >
-                    <span>Fachprüfungsordnung (PO 2025)</span>
+                    <span>{tr.footer.docLinks.fpo}</span>
                     <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
                   </a>
                 </li>
@@ -676,7 +698,7 @@ export default function App() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 hover:text-teal-700 hover:underline underline-offset-2 transition-colors"
                   >
-                    <span>Kursempfehlung für Auflagen (§ 6 FPO)</span>
+                    <span>{tr.footer.docLinks.makeup}</span>
                     <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
                   </a>
                 </li>
@@ -687,7 +709,7 @@ export default function App() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 hover:text-teal-700 hover:underline underline-offset-2 transition-colors"
                   >
-                    <span>Studiengangsvorstellung Master DIT</span>
+                    <span>{tr.footer.docLinks.intro}</span>
                     <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
                   </a>
                 </li>
@@ -704,7 +726,7 @@ export default function App() {
                   {"\u200B"}
                 </span>
                 <h2 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                  Schnellzugriff
+                  {tr.footer.quickLinksHeading}
                 </h2>
               </div>
               <ul className="space-y-2 text-xs text-slate-700">
@@ -714,36 +736,38 @@ export default function App() {
                     onClick={() =>
                       window.scrollTo({ top: 0, behavior: "smooth" })
                     }
-                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-left"
+                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-start"
                   >
-                    KI-Studienberatung
+                    {tr.footer.quickLinks.chat}
                   </button>
                 </li>
                 <li>
                   <button
                     type="button"
                     onClick={() => selectDashboardTab("timetable")}
-                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-left"
+                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-start"
                   >
-                    Stundenplan &amp; Kurswahl
+                    {tr.footer.quickLinks.timetable}
                   </button>
                 </li>
                 <li>
                   <button
                     type="button"
                     onClick={() => selectDashboardTab("exams")}
-                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-left"
+                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-start"
                   >
-                    Prüfungsübersicht &amp; ECTS
+                    {tr.footer.quickLinks.exams}
                   </button>
                 </li>
                 <li>
                   <button
                     type="button"
                     onClick={() => setShowProfileModal(true)}
-                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-left"
+                    className="hover:text-teal-700 hover:underline underline-offset-2 transition-colors text-start"
                   >
-                    Studienprofil anpassen
+                    {userProfile
+                      ? tr.footer.quickLinks.editProfile
+                      : tr.footer.quickLinks.fillProfile}
                   </button>
                 </li>
               </ul>
@@ -751,13 +775,8 @@ export default function App() {
           </div>
 
           <div className="mt-7 pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-slate-500">
-            <span>
-              Universität Kassel · Master DIT · Modul: Prompt Engineering
-            </span>
-            <span>
-              Unverbindliche Planungshilfe – verbindliche Zeiten &amp; Fristen in
-              eCampus/HISPOS prüfen.
-            </span>
+            <span>{tr.footer.bottomLeft}</span>
+            <span>{tr.footer.bottomRight}</span>
           </div>
         </div>
       </footer>
