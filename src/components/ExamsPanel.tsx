@@ -6,6 +6,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock,
+  FileDown,
   FileText,
   Info,
   Lock,
@@ -17,6 +18,8 @@ import {
   type DitModule,
   type SemesterId,
 } from "../data/ditCatalog";
+import type { UserProfile } from "../types/userProfile";
+import { exportExamsPdf } from "../utils/pdfExport";
 
 interface ExamsPanelProps {
   activeSemester: SemesterId;
@@ -28,6 +31,7 @@ interface ExamsPanelProps {
   currentSemesterRegularCp: number;
   totalMasterCp: number;
   targetSemesterEcts?: number;
+  userProfile?: UserProfile | null;
   lastExamFinished: boolean;
   onToggleLastExamFinished: () => void;
   onJumpToNextSemester: () => void;
@@ -49,6 +53,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
   currentSemesterRegularCp,
   totalMasterCp,
   targetSemesterEcts = 30,
+  userProfile = null,
   lastExamFinished,
   onToggleLastExamFinished,
   onJumpToNextSemester,
@@ -222,7 +227,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
 
       {/* 2. Selected Modules Exam Overview ONLY */}
       <div className="space-y-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-teal-800">
               Prüfungen der gewählten Module ({semesterInfo.shortLabel})
@@ -231,10 +236,37 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
               Es werden ausschließlich deine im Stundenplan ausgewählten Module angezeigt.
             </p>
           </div>
-          <span className="text-xs text-slate-500 tabular-nums">
-            {selectedModules.length}{" "}
-            {selectedModules.length === 1 ? "Modul" : "Module"}
-          </span>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <span className="text-xs text-slate-500 tabular-nums">
+              {selectedModules.length}{" "}
+              {selectedModules.length === 1 ? "Modul" : "Module"}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                exportExamsPdf({
+                  activeSemester,
+                  selectedModules,
+                  completedMakeupIds,
+                  wiseCompletedCp,
+                  currentSemesterRegularCp,
+                  totalMasterCp,
+                  targetSemesterEcts,
+                  userProfile,
+                })
+              }
+              disabled={selectedModules.length === 0}
+              title={
+                selectedModules.length === 0
+                  ? "Wähle zuerst mindestens ein Modul im Stundenplan aus"
+                  : "Prüfungsübersicht als PDF herunterladen"
+              }
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-600/35 hover:border-teal-700 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Als PDF speichern</span>
+            </button>
+          </div>
         </div>
 
         {selectedModules.length === 0 ? (

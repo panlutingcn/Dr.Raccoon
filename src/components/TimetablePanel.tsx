@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   BookOpen,
   Check,
+  FileDown,
   Languages,
   Pencil,
   Plus,
@@ -12,6 +13,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { exportTimetablePdf } from "../utils/pdfExport";
 import {
   getProfileDisplayParts,
   getTargetEctsForProfile,
@@ -502,7 +504,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
     <div className="space-y-5">
       {/* Compact Status Bar + Profile Status Strip */}
       <div className="space-y-2.5 pb-3 border-b border-slate-200">
-        <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
             {conflicts.length > 0 && (
               <>
@@ -530,15 +532,38 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={onClearSchedule}
-            disabled={selectedModuleIds.length === 0}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Leeren</span>
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() =>
+                exportTimetablePdf({
+                  activeSemester,
+                  selectedModules,
+                  userProfile,
+                })
+              }
+              disabled={selectedModules.length === 0}
+              title={
+                selectedModules.length === 0
+                  ? "Wähle zuerst mindestens ein Modul aus"
+                  : "Stundenplan als PDF herunterladen"
+              }
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-600/35 hover:border-teal-700 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Als PDF speichern</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClearSchedule}
+              disabled={selectedModuleIds.length === 0}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Leeren</span>
+            </button>
+          </div>
         </div>
 
         {/* Kompakte Profil-Statusleiste */}
@@ -1192,7 +1217,7 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
             </button>
           </div>
         ) : (
-          <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5">
+          <div className="space-y-2">
             {filteredModules.map((mod) => {
               const isSelected = selectedModuleIds.includes(mod.id);
               const conflict = wouldConflict(mod);

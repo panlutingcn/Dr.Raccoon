@@ -19,6 +19,7 @@ import {
   type SemesterId,
 } from "../data/ditCatalog";
 import {
+  getProfileDisplayParts,
   getTargetEctsForProfile,
   type UserProfile,
 } from "../types/userProfile";
@@ -152,6 +153,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   onApplySuggestedModules,
 }) => {
   const targetEcts = getTargetEctsForProfile(userProfile);
+  const profileDisplay = userProfile ? getProfileDisplayParts(userProfile) : null;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -360,7 +362,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   const renderComposer = (extraRows = 3) => (
     <form onSubmit={handleSubmit}>
       <div
-        className={`flex flex-col rounded-2xl border border-white/25 shadow-sm transition-colors focus-within:border-white focus-within:ring-2 focus-within:ring-white/30 ${
+        className={`flex flex-col rounded-2xl border border-white shadow-lg shadow-teal-950/25 transition-all focus-within:ring-2 focus-within:ring-white/40 ${
           isStreaming ? "bg-slate-50" : "bg-white"
         }`}
       >
@@ -397,51 +399,109 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   return (
     <section
       aria-label="Interaktiver KI-Studienberater Dr. Raccoon"
-      className="flex flex-col bg-teal-700 border border-teal-800 rounded-xl overflow-hidden h-[760px] lg:h-[calc(100vh-104px)] min-h-[620px]"
+      className={
+        hasConversation
+          ? "flex flex-col bg-teal-800/35 rounded-2xl overflow-hidden h-[720px] lg:h-[min(700px,calc(100vh-96px))] min-h-[560px]"
+          : "flex flex-col bg-teal-700 min-h-[540px] lg:min-h-[min(620px,calc(100vh-148px))]"
+      }
     >
-      {!userProfile && (
-        <div className="flex items-center justify-between gap-2.5 px-4 py-2.5 bg-teal-800/90 border-b border-white/15 text-xs text-teal-50 shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <Info className="w-4 h-4 text-[#F8DAC5] shrink-0" />
-            <span className="leading-snug">
-              Hinweis: Fülle dein Studienprofil aus, damit Dr. Raccoon dich
-              passgenau berät.
-            </span>
+      {!userProfile ? (
+        <div
+          className={
+            hasConversation
+              ? "flex items-center justify-between gap-2.5 px-4 sm:px-6 py-2.5 bg-teal-800/75 text-xs text-teal-50 shrink-0"
+              : "px-3.5 sm:px-7 pt-2 shrink-0"
+          }
+        >
+          <div
+            className={
+              hasConversation
+                ? "flex items-center justify-between gap-2.5 max-w-4xl mx-auto w-full"
+                : "flex items-center justify-between gap-2.5 max-w-xl lg:max-w-2xl mx-auto w-full rounded-xl bg-teal-800/55 px-4 py-2.5 text-xs text-teal-50"
+            }
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Info className="w-4 h-4 text-[#F8DAC5] shrink-0" />
+              <span className="leading-snug">
+                Hinweis: Fülle dein Studienprofil aus, damit Dr. Raccoon dich
+                passgenau berät.
+              </span>
+            </div>
+            {onOpenProfileModal && (
+              <button
+                type="button"
+                onClick={onOpenProfileModal}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-teal-900 hover:bg-teal-50 font-semibold transition-colors whitespace-nowrap shrink-0"
+              >
+                <User className="w-3.5 h-3.5 shrink-0" />
+                <span>Profil ausfüllen</span>
+              </button>
+            )}
           </div>
-          {onOpenProfileModal && (
-            <button
-              type="button"
-              onClick={onOpenProfileModal}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-teal-900 hover:bg-teal-50 font-semibold transition-colors whitespace-nowrap shrink-0"
-            >
-              <User className="w-3.5 h-3.5 shrink-0" />
-              <span>Profil ausfüllen</span>
-            </button>
-          )}
         </div>
+      ) : (
+        profileDisplay && (
+          <div
+            className={`flex lg:hidden items-center justify-end shrink-0 ${
+              hasConversation
+                ? "px-4 py-2 bg-teal-800/55"
+                : "px-3.5 sm:px-7 pt-2 pb-0"
+            }`}
+          >
+            <div
+              className={
+                hasConversation
+                  ? "w-full flex justify-end"
+                  : "w-full max-w-xl lg:max-w-2xl mx-auto flex justify-end"
+              }
+            >
+              <button
+                type="button"
+                onClick={onOpenProfileModal}
+                title="Gespeichertes Studienprofil bearbeiten"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/25 bg-teal-800/75 hover:bg-teal-800 text-white text-xs font-semibold transition-colors whitespace-nowrap max-w-full"
+              >
+                <span aria-hidden="true" className="shrink-0">
+                  🎓
+                </span>
+                <span className="truncate tabular-nums">
+                  {profileDisplay.buttonSummary}
+                </span>
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       {!hasConversation ? (
         /* Gemini-inspired Clean Start Canvas */
-        <div className="flex-1 flex flex-col px-3.5 sm:px-7 py-5 overflow-y-auto">
-          <div className="w-full max-w-xl mx-auto my-auto space-y-5">
-            {/* Hero Greeting */}
-            <div className="@container space-y-1.5 text-center">
-              <p className="text-[clamp(9px,3.15cqw,12px)] font-medium text-teal-100 whitespace-nowrap">
-                KI-Studienberatung · Master DIT · Universität Kassel (FB 07)
-              </p>
-              <h2 className="mx-auto font-bold tracking-tight leading-[1.25] text-white text-[clamp(14px,5.3cqw,25px)]">
-                <span className="block whitespace-nowrap">
-                  Hi, ich bin{" "}
-                  <span className="font-logo font-normal tracking-normal text-[#F8DAC5]">
-                    Dr. Raccoon
+        <div className="flex-1 flex flex-col px-3.5 sm:px-7 py-4 sm:py-6 overflow-y-auto">
+          <div className="w-full max-w-xl lg:max-w-2xl mx-auto my-auto space-y-4 sm:space-y-5">
+            {/* Centered Transparent Mascot Logo + Hero Greeting */}
+            <div className="@container text-center">
+              <img
+                src="/assets/aistudio/raccoon_logo_transparent.png"
+                alt="Dr. Raccoon Logo"
+                referrerPolicy="no-referrer"
+                className="mx-auto h-24 sm:h-28 w-auto object-contain mb-3.5 drop-shadow-[0_3px_8px_rgba(0,0,0,0.2)]"
+              />
+              <div className="space-y-1">
+                <p className="text-[clamp(9px,3.15cqw,12px)] font-medium text-teal-100 whitespace-nowrap">
+                  KI-Studienberatung · Master DIT · Universität Kassel (FB 07)
+                </p>
+                <h2 className="mx-auto font-bold tracking-tight leading-[1.25] text-white text-[clamp(14px,5.3cqw,25px)]">
+                  <span className="block whitespace-nowrap">
+                    Hi, ich bin{" "}
+                    <span className="font-logo font-normal tracking-normal text-[#F8DAC5]">
+                      Dr. Raccoon
+                    </span>
+                    .
                   </span>
-                  .
-                </span>
-                <span className="block whitespace-nowrap text-teal-100 font-semibold mt-0.5">
-                  Wie planen wir dieses Semester?
-                </span>
-              </h2>
+                  <span className="block whitespace-nowrap text-teal-100 font-semibold mt-0.5">
+                    Wie planen wir dieses Semester?
+                  </span>
+                </h2>
+              </div>
             </div>
 
             {/* Unified Composer */}
@@ -511,9 +571,10 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
         <>
           <div
             ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto px-4 sm:px-5 py-5 space-y-4 bg-teal-700"
+            className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 bg-teal-700"
           >
-            {messages.map((msg, index) => {
+            <div className="max-w-4xl mx-auto space-y-4">
+              {messages.map((msg, index) => {
               const isUser = msg.role === "user";
               const isFinishedAssistant =
                 !isUser &&
@@ -650,10 +711,12 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                 </div>
               );
             })}
+            </div>
           </div>
 
-          <div className="border-t border-white/15 bg-teal-700 px-4 py-3 shrink-0 space-y-2">
-            {renderComposer(2)}
+          <div className="border-t border-white/15 bg-teal-700 px-4 sm:px-6 py-3 shrink-0">
+            <div className="max-w-4xl mx-auto space-y-2">
+              {renderComposer(2)}
             <div className="flex items-center justify-between gap-2 text-xs text-teal-100 px-1">
               <div className="flex items-center gap-x-2 min-w-0">
                 {STUDY_DOCUMENTS.map((doc) => (
@@ -680,6 +743,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span>Neuer Chat</span>
               </button>
+            </div>
             </div>
           </div>
         </>
