@@ -27,6 +27,7 @@ interface ExamsPanelProps {
   wiseCompletedCp: number;
   currentSemesterRegularCp: number;
   totalMasterCp: number;
+  targetSemesterEcts?: number;
   lastExamFinished: boolean;
   onToggleLastExamFinished: () => void;
   onJumpToNextSemester: () => void;
@@ -47,6 +48,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
   wiseCompletedCp,
   currentSemesterRegularCp,
   totalMasterCp,
+  targetSemesterEcts = 30,
   lastExamFinished,
   onToggleLastExamFinished,
   onJumpToNextSemester,
@@ -73,7 +75,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
   );
   const semesterProgressPct = Math.min(
     100,
-    Math.round((currentSemesterRegularCp / 30) * 100)
+    Math.round((currentSemesterRegularCp / targetSemesterEcts) * 100)
   );
 
   return (
@@ -129,7 +131,7 @@ export const ExamsPanel: React.FC<ExamsPanelProps> = ({
               Geplant ({semesterInfo.shortLabel})
             </div>
             <div className="font-mono text-sm font-bold text-teal-900 mt-0.5">
-              {currentSemesterRegularCp} / 30 ECTS{" "}
+              {currentSemesterRegularCp} / {targetSemesterEcts} ECTS{" "}
               <span className="font-sans font-normal text-[11px] text-teal-700">
                 ({semesterProgressPct}%)
               </span>

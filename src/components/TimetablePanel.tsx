@@ -8,9 +8,15 @@ import {
   Plus,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
+import {
+  getProfileDisplayParts,
+  getTargetEctsForProfile,
+  type UserProfile,
+} from "../types/userProfile";
 import {
   AREA_FILTER_OPTIONS,
   SEMESTER_INFOS,
@@ -42,6 +48,8 @@ interface TimetablePanelProps {
   allModules: DitModule[];
   selectedModuleIds: string[];
   moduleOverrides?: Record<string, Partial<DitModule>>;
+  userProfile?: UserProfile | null;
+  onOpenProfileModal?: () => void;
   onToggleModule: (moduleId: string) => void;
   onAddCustomModule: (newModule: DitModule) => void;
   onUpdateModule: (moduleId: string, patch: Partial<DitModule>) => void;
@@ -106,6 +114,8 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
   allModules,
   selectedModuleIds,
   moduleOverrides = {},
+  userProfile = null,
+  onOpenProfileModal,
   onToggleModule,
   onAddCustomModule,
   onUpdateModule,
@@ -114,6 +124,8 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
   onClearSchedule,
 }) => {
   const semesterInfo = SEMESTER_INFOS[activeSemester];
+  const targetEcts = getTargetEctsForProfile(userProfile);
+  const profileDisplay = userProfile ? getProfileDisplayParts(userProfile) : null;
   const [searchQuery, setSearchQuery] = useState("");
   const [areaFilter, setAreaFilter] = useState<AreaFilter>("Alle");
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>("Alle");
@@ -488,44 +500,93 @@ export const TimetablePanel: React.FC<TimetablePanelProps> = ({
 
   return (
     <div className="space-y-5">
-      {/* Compact Status Bar */}
-      <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200 text-xs sm:text-sm">
-        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
-          {conflicts.length > 0 && (
-            <>
-              <span className="inline-flex items-center gap-1.5 text-red-700 font-medium">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>
-                  {conflicts.length}{" "}
-                  {conflicts.length === 1 ? "Konflikt" : "Konflikte"}
+      {/* Compact Status Bar + Profile Status Strip */}
+      <div className="space-y-2.5 pb-3 border-b border-slate-200">
+        <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
+            {conflicts.length > 0 && (
+              <>
+                <span className="inline-flex items-center gap-1.5 text-red-700 font-medium">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>
+                    {conflicts.length}{" "}
+                    {conflicts.length === 1 ? "Konflikt" : "Konflikte"}
+                  </span>
                 </span>
-              </span>
-              <span aria-hidden="true" className="text-slate-300">
-                ·
-              </span>
-            </>
-          )}
+                <span aria-hidden="true" className="text-slate-300">
+                  ·
+                </span>
+              </>
+            )}
 
-          <span className="font-mono font-semibold text-teal-800 tabular-nums whitespace-nowrap">
-            {regularCp} / 30 ECTS
-          </span>
-
-          {makeupCp > 0 && (
-            <span className="text-[#ff8000] font-medium tabular-nums whitespace-nowrap">
-              (+{makeupCp} ECTS Auflagen)
+            <span className="font-mono font-semibold text-teal-800 tabular-nums whitespace-nowrap">
+              {regularCp} / {targetEcts} ECTS
             </span>
-          )}
+
+            {makeupCp > 0 && (
+              <span className="text-[#ff8000] font-medium tabular-nums whitespace-nowrap">
+                (+{makeupCp} ECTS Auflagen)
+              </span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onClearSchedule}
+            disabled={selectedModuleIds.length === 0}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Leeren</span>
+          </button>
         </div>
 
-        <button
-          type="button"
-          onClick={onClearSchedule}
-          disabled={selectedModuleIds.length === 0}
-          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-40"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          <span>Leeren</span>
-        </button>
+        {/* Kompakte Profil-Statusleiste */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px]">
+          {profileDisplay && userProfile ? (
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/80 text-slate-700 font-medium whitespace-nowrap max-w-[260px]">
+                <span aria-hidden="true" className="shrink-0">
+                  🎓
+                </span>
+                <span className="truncate">
+                  Bachelor: {profileDisplay.bachelorOpt.chipLabel}
+                </span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/80 text-slate-700 font-medium whitespace-nowrap">
+                <span aria-hidden="true">🎯</span>
+                <span>Profil: {profileDisplay.masterOpt.shortLabel}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200/80 text-slate-700 font-medium tabular-nums whitespace-nowrap">
+                <span aria-hidden="true">💼</span>
+                <span>
+                  {userProfile.hasPartTimeJob
+                    ? `Werkstudent: ${userProfile.jobHoursPerWeek}h/Wo.`
+                    : "Kein Nebenjob"}
+                </span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50/70 border border-teal-200/80 text-teal-900 font-medium tabular-nums whitespace-nowrap">
+                <span aria-hidden="true">⚖️</span>
+                <span>Ziel: {profileDisplay.workloadOpt.chipLabel}</span>
+              </span>
+            </div>
+          ) : (
+            <span className="text-slate-500">
+              Noch kein Studienprofil hinterlegt · Standardziel: 30 ECTS
+            </span>
+          )}
+
+          {onOpenProfileModal && (
+            <button
+              type="button"
+              onClick={onOpenProfileModal}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-semibold text-teal-800 bg-white hover:bg-teal-50 border border-teal-600/35 hover:border-teal-700 rounded-md transition-colors whitespace-nowrap shrink-0"
+            >
+              <SlidersHorizontal className="w-3 h-3" />
+              <span>Profil anpassen</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Weekly Timetable Grid (Mo–Fr) */}

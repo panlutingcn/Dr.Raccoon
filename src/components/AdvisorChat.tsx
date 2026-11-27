@@ -5,9 +5,11 @@ import {
   Check,
   ExternalLink,
   GraduationCap,
+  Info,
   RefreshCw,
   Send,
   Sparkles,
+  User,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +18,10 @@ import {
   type DitModule,
   type SemesterId,
 } from "../data/ditCatalog";
+import {
+  getTargetEctsForProfile,
+  type UserProfile,
+} from "../types/userProfile";
 
 export interface ChatMessage {
   id: string;
@@ -31,6 +37,8 @@ interface AdvisorChatProps {
   completedMakeupIds: string[];
   customModules?: DitModule[];
   moduleOverrides?: Record<string, Partial<DitModule>>;
+  userProfile?: UserProfile | null;
+  onOpenProfileModal?: () => void;
   onApplySuggestedModules: (moduleIds: string[]) => void;
 }
 
@@ -139,8 +147,11 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
   completedMakeupIds,
   customModules = [],
   moduleOverrides = {},
+  userProfile = null,
+  onOpenProfileModal,
   onApplySuggestedModules,
 }) => {
+  const targetEcts = getTargetEctsForProfile(userProfile);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -236,6 +247,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
           customModules,
           moduleOverrides,
           activeSemester,
+          userProfile,
         }),
       });
 
@@ -363,7 +375,7 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={isStreaming}
-          placeholder="Frag mich zu Modulen, Auflagen (§ 6 FPO) oder einem konfliktfreien 30-ECTS-Stundenplan."
+          placeholder={`Frag mich zu Modulen, Auflagen (§ 6 FPO) oder einem konfliktfreien ${targetEcts}-ECTS-Stundenplan.`}
           className="w-full min-h-[88px] resize-none rounded-t-2xl bg-transparent px-4 pt-3 pb-1.5 text-xs leading-relaxed text-slate-900 placeholder:text-slate-400 focus:outline-none"
         />
         <div className="flex items-center justify-end px-3 pb-2.5 pt-1">
@@ -387,6 +399,28 @@ export const AdvisorChat: React.FC<AdvisorChatProps> = ({
       aria-label="Interaktiver KI-Studienberater Dr. Raccoon"
       className="flex flex-col bg-teal-700 border border-teal-800 rounded-xl overflow-hidden h-[760px] lg:h-[calc(100vh-104px)] min-h-[620px]"
     >
+      {!userProfile && (
+        <div className="flex items-center justify-between gap-2.5 px-4 py-2.5 bg-teal-800/90 border-b border-white/15 text-xs text-teal-50 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Info className="w-4 h-4 text-[#F8DAC5] shrink-0" />
+            <span className="leading-snug">
+              Hinweis: Fülle dein Studienprofil aus, damit Dr. Raccoon dich
+              passgenau berät.
+            </span>
+          </div>
+          {onOpenProfileModal && (
+            <button
+              type="button"
+              onClick={onOpenProfileModal}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white text-teal-900 hover:bg-teal-50 font-semibold transition-colors whitespace-nowrap shrink-0"
+            >
+              <User className="w-3.5 h-3.5 shrink-0" />
+              <span>Profil ausfüllen</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {!hasConversation ? (
         /* Gemini-inspired Clean Start Canvas */
         <div className="flex-1 flex flex-col px-3.5 sm:px-7 py-5 overflow-y-auto">

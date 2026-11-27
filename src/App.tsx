@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Compass, Info, LogIn, UserCheck, X } from "lucide-react";
+import { CalendarDays, Compass, User } from "lucide-react";
 import { AdvisorChat } from "./components/AdvisorChat";
 import { ExamsPanel } from "./components/ExamsPanel";
+import { ProfileModal } from "./components/ProfileModal";
 import { TimetablePanel } from "./components/TimetablePanel";
 import {
   DIT_MODULES,
@@ -9,6 +10,12 @@ import {
   type DitModule,
   type SemesterId,
 } from "./data/ditCatalog";
+import {
+  getProfileDisplayParts,
+  getTargetEctsForProfile,
+  sanitizeUserProfile,
+  type UserProfile,
+} from "./types/userProfile";
 
 type DashboardTab = "timetable" | "exams";
 
@@ -19,6 +26,7 @@ const STORAGE_KEYS = {
   moduleOverrides: "dr_raccoon_dit_module_overrides_v1",
   lastExamFinished: "dr_raccoon_dit_last_exam_finished_v1",
   activeSemester: "dr_raccoon_dit_active_semester_v1",
+  userProfile: "dr_raccoon_dit_user_profile_v1",
 };
 
 function readStoredStringArray(key: string, fallback: string[]): string[] {
@@ -85,6 +93,16 @@ function readStoredModuleOverrides(): Record<string, Partial<DitModule>> {
   }
 }
 
+function readStoredUserProfile(): UserProfile | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.userProfile);
+    if (!raw) return null;
+    return sanitizeUserProfile(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("timetable");
   const [activeSemester, setActiveSemester] = useState<SemesterId>(() => {
@@ -119,11 +137,10 @@ export default function App() {
   const [moduleOverrides, setModuleOverrides] = useState<
     Record<string, Partial<DitModule>>
   >(() => readStoredModuleOverrides());
-  const [showLoginModal, setShowLoginModal] = useState(false);
-  const [uniAccountInput, setUniAccountInput] = useState("");
-  const [uniPasswordInput, setUniPasswordInput] = useState("");
-  const [uniAccountUser, setUniAccountUser] = useState<string | null>(null);
-  const [loginError, setLoginError] = useState("");
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(() =>
+    readStoredUserProfile()
+  );
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   const dashboardDetailRef = useRef<HTMLElement>(null);
 
@@ -193,6 +210,21 @@ export default function App() {
       // ignore storage quota errors
     }
   }, [activeSemester]);
+
+  useEffect(() => {
+    try {
+      if (userProfile) {
+        window.localStorage.setItem(
+          STORAGE_KEYS.userProfile,
+          JSON.stringify(userProfile)
+        );
+      } else {
+        window.localStorage.removeItem(STORAGE_KEYS.userProfile);
+      }
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [userProfile]);
 
   const allModules = useMemo(
     () =>
@@ -323,32 +355,8 @@ export default function App() {
 
   const totalMasterCp = wiseCompletedCp + currentSemesterRegularCp;
   const semesterInfo = SEMESTER_INFOS[activeSemester];
-
-  const handleOpenLogin = () => {
-    setLoginError("");
-    setShowLoginModal(true);
-  };
-
-  const handlePreviewLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleaned = uniAccountInput.trim();
-    if (!cleaned || !uniPasswordInput) {
-      setLoginError("Bitte Uni-Account-Kennung und Passwort eingeben.");
-      return;
-    }
-    setUniAccountUser(cleaned);
-    setUniPasswordInput("");
-    setLoginError("");
-    setShowLoginModal(false);
-  };
-
-  const handlePreviewLogout = () => {
-    setUniAccountUser(null);
-    setUniAccountInput("");
-    setUniPasswordInput("");
-    setLoginError("");
-    setShowLoginModal(false);
-  };
+  const targetSemesterEcts = getTargetEctsForProfile(userProfile);
+  const profileDisplay = userProfile ? getProfileDisplayParts(userProfile) : null;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
@@ -402,24 +410,31 @@ export default function App() {
 
             <button
               type="button"
-              onClick={handleOpenLogin}
+              onClick={() => setShowProfileModal(true)}
+              title={
+                profileDisplay
+                  ? "Gespeichertes Studienprofil bearbeiten"
+                  : "Studienprofil einrichten"
+              }
               className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-lg border text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 ${
-                uniAccountUser
+                profileDisplay
                   ? "bg-teal-50 text-teal-900 border-teal-300 hover:bg-teal-100"
                   : "bg-teal-700 text-white border-teal-700 hover:bg-teal-800"
               }`}
             >
-              {uniAccountUser ? (
+              {profileDisplay ? (
                 <>
-                  <UserCheck className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate max-w-[110px] sm:max-w-none">
-                    {uniAccountUser}
+                  <span aria-hidden="true" className="shrink-0">
+                    🎓
+                  </span>
+                  <span className="truncate max-w-[175px] sm:max-w-[300px] tabular-nums">
+                    {profileDisplay.buttonSummary}
                   </span>
                 </>
               ) : (
                 <>
-                  <LogIn className="w-3.5 h-3.5 shrink-0" />
-                  <span>Login</span>
+                  <User className="w-3.5 h-3.5 shrink-0" />
+                  <span>Mein Profil</span>
                 </>
               )}
             </button>
@@ -442,6 +457,8 @@ export default function App() {
               completedMakeupIds={completedMakeupIds}
               customModules={customModules}
               moduleOverrides={moduleOverrides}
+              userProfile={userProfile}
+              onOpenProfileModal={() => setShowProfileModal(true)}
               onApplySuggestedModules={handleApplySuggestedModules}
             />
           </div>
@@ -485,6 +502,8 @@ export default function App() {
                     allModules={allModules}
                     selectedModuleIds={selectedModuleIds}
                     moduleOverrides={moduleOverrides}
+                    userProfile={userProfile}
+                    onOpenProfileModal={() => setShowProfileModal(true)}
                     onToggleModule={toggleModule}
                     onAddCustomModule={handleAddCustomModule}
                     onUpdateModule={handleUpdateModule}
@@ -504,6 +523,7 @@ export default function App() {
                     wiseCompletedCp={wiseCompletedCp}
                     currentSemesterRegularCp={currentSemesterRegularCp}
                     totalMasterCp={totalMasterCp}
+                    targetSemesterEcts={targetSemesterEcts}
                     lastExamFinished={lastExamFinished}
                     onToggleLastExamFinished={() =>
                       setLastExamFinished((prev) => !prev)
@@ -519,138 +539,13 @@ export default function App() {
         </div>
       </main>
 
-      {/* Uni Kassel Uni-Account Login Modal (UI Preview) */}
-      {showLoginModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="uni-login-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-        >
-          <div className="w-full max-w-md rounded-xl bg-white border border-slate-200 shadow-lg overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-5 py-3.5 bg-teal-700 text-white">
-              <div className="min-w-0">
-                <h2
-                  id="uni-login-title"
-                  className="text-sm sm:text-base font-bold tracking-tight"
-                >
-                  Uni-Account Login · Universität Kassel
-                </h2>
-                <p className="text-xs text-teal-50 mt-0.5">
-                  Anmeldung mit deinem zentralen Uni-Account (ITS / eCampus)
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowLoginModal(false)}
-                aria-label="Login-Fenster schließen"
-                className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-white/15 transition-colors shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              <div className="flex items-start gap-2 rounded-lg border border-[#ff8000]/35 bg-[#FFF4E8] px-3 py-2.5 text-xs text-slate-700">
-                <Info className="w-4 h-4 text-[#ff8000] shrink-0 mt-0.5" />
-                <span>
-                  <strong className="text-[#B85800]">UI-Vorschau:</strong> Die
-                  Backend-Anbindung an den Uni-Account der Universität Kassel wird
-                  später ergänzt.
-                </span>
-              </div>
-
-              {uniAccountUser ? (
-                <div className="space-y-4">
-                  <div className="rounded-lg border border-teal-200 bg-teal-50/60 px-3.5 py-3 text-xs text-slate-700">
-                    <div>Angemeldeter Account (Vorschau):</div>
-                    <div className="font-mono text-sm font-bold text-teal-900 mt-0.5">
-                      {uniAccountUser}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowLoginModal(false)}
-                      className="px-3.5 py-2 text-xs font-medium text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors"
-                    >
-                      Schließen
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePreviewLogout}
-                      className="px-3.5 py-2 text-xs font-semibold text-white bg-slate-700 hover:bg-slate-800 rounded-lg transition-colors"
-                    >
-                      Abmelden
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <form onSubmit={handlePreviewLoginSubmit} className="space-y-3.5">
-                  {loginError && (
-                    <p className="text-xs font-medium text-red-700">
-                      {loginError}
-                    </p>
-                  )}
-
-                  <div>
-                    <label
-                      htmlFor="uni-account-id"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Uni-Account-Kennung
-                    </label>
-                    <input
-                      id="uni-account-id"
-                      type="text"
-                      autoComplete="username"
-                      value={uniAccountInput}
-                      onChange={(e) => setUniAccountInput(e.target.value)}
-                      placeholder="z. B. uk123456"
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="uni-account-pw"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Passwort
-                    </label>
-                    <input
-                      id="uni-account-pw"
-                      type="password"
-                      autoComplete="current-password"
-                      value={uniPasswordInput}
-                      onChange={(e) => setUniPasswordInput(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:border-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-700/15"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setShowLoginModal(false)}
-                      className="px-3.5 py-2 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors"
-                    >
-                      Abbrechen
-                    </button>
-                    <button
-                      type="submit"
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors"
-                    >
-                      <LogIn className="w-3.5 h-3.5" />
-                      <span>Mit Uni-Account einloggen</span>
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <ProfileModal
+        isOpen={showProfileModal}
+        savedProfile={userProfile}
+        onClose={() => setShowProfileModal(false)}
+        onSave={(nextProfile) => setUserProfile(nextProfile)}
+        onReset={() => setUserProfile(null)}
+      />
     </div>
   );
 }

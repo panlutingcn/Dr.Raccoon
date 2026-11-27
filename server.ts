@@ -12,6 +12,12 @@ import {
   type DitModule,
   type SemesterId,
 } from "./src/data/ditCatalog.ts";
+import {
+  buildUserProfileContextJson,
+  getTargetEctsForProfile,
+  sanitizeUserProfile,
+  type UserProfile,
+} from "./src/types/userProfile.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,8 +65,11 @@ function buildSystemInstruction(
   completedMakeupIds: string[],
   activeSemester: SemesterId,
   customModules: DitModule[],
-  moduleOverrides: Record<string, Partial<DitModule>> = {}
+  moduleOverrides: Record<string, Partial<DitModule>> = {},
+  userProfile: UserProfile | null = null
 ): string {
+  const targetEcts = getTargetEctsForProfile(userProfile);
+  const userProfileJson = buildUserProfileContextJson(userProfile);
   const semesterInfo = SEMESTER_INFOS[activeSemester] ?? SEMESTER_INFOS.wise2627;
   const allModules = [...DIT_MODULES, ...customModules].map((m) =>
     moduleOverrides[m.id] ? { ...m, ...moduleOverrides[m.id] } : m
@@ -139,21 +148,30 @@ Nutze ausschließlich die im Anhang als PDF bereitgestellten Modulinformationen 
 
 4. **Aktueller Semester- & Dashboard-Kontext (${semesterInfo.label} · ${semesterInfo.studySemesterLabel}):**
    - Aktuell vom Studierenden im Stundenplan ausgewählt: ${currentSelectionText}
-   - Reguläre Master-CP im aktuellen Plan: ${regularCp} CP (Semesterziel: 30 CP, Gesamtstudium: 120 CP)
+   - Reguläre Master-CP im aktuellen Plan: ${regularCp} CP (Persönliches Semesterziel laut Profil: ${targetEcts} CP, Gesamtstudium: 120 CP)
    - Auflagen-CP im aktuellen Plan: ${makeupCp} CP (Als bestanden markiert: ${completedMakeupIds.length > 0 ? completedMakeupIds.join(", ") : "keine"})
    - Aktuelle Zeitkonflikte im Dashboard: ${conflictText}
    - Verfügbare Module & aktuell eingetragene Zeiten/Daten im Dashboard (${semesterInfo.shortLabel}):
 ${catalogLines}
 
+5. **Aktuelles Studienprofil des Nutzers (Echtzeit-Kontext):**
+<user_profile>
+${userProfileJson}
+</user_profile>
+
 # Step-by-Step Reasoning (Chain-of-Thought)
 Befolge bei jeder Beratungsanfrage intern diese Schritte, bevor du antwortest:
-1. Bedarfsanalyse: Identifiziere Ziel (z. B. Stundenplan, Workload-Check, Karrierefokus) und Einschränkungen (z. B. bestimmte Tage frei, Vorkenntnisse, Ziel-CPs). Fehlende Kerninfos fragst du gezielt nach.
-2. Regel- & Konfliktprüfung: Prüfe Modulkombinationen auf Zeitüberschneidungen, benötigte Vorkenntnisse und exakte CP-Summen (bei regulärer Semesterplanung i. d. R. 5 konkrete Module à 6 CP = 30 CP; CIDA-Doppelanrechnungsverbot beachten; Pflichtmodule vs. Wahlpflicht trennen).
-3. Empfehlungslogik: Kombiniere formale Vorgaben (Prüfungsordnung) mit praxisnahen Hinweisen zu Arbeitsbelastung (Workload) und Prüfungsformen.
+1. Bedarfsanalyse & Profil-Abgleich: Werte zuerst den \`<user_profile>\`-Block aus. Identifiziere Ziel (z. B. Stundenplan, Workload-Check, Karrierefokus) sowie Einschränkungen (z. B. Fachsemester, Nebenjob-Stunden, gewünschter Workload, Vorkenntnisse).
+2. Personalisierung & Regelprüfung:
+   - **Personalisierte Empfehlungen:** Berücksichtige immer den \`<user_profile>\`-Kontext. Bei einem nicht-technischen bzw. fachfremden Bachelor (z. B. Wirtschaftswissenschaften, Informationswissenschaften oder Sonstiges, \`isNonTechnicalBachelor: true\`) weise proaktiv auf relevante Auflagen (§ 6 FPO, z. B. fehlende Informatik-/Mathe-/Statistik-/WI-Grundlagen bis max. 30 CP) hin. Priorisiere Module aus dem gewählten Master-Profil (\`DITraM\`, \`UCeDI\` oder \`CIDA\`) und berücksichtige das aktuelle Fachsemester (z. B. im 3. Sem. Projektseminar/Schlüsselkompetenzen, im 4. Sem. 84-CP-Grenze & Auflagenabschluss vor Masterarbeit).
+   - Prüfe Modulkombinationen auf Zeitüberschneidungen, benötigte Vorkenntnisse und exakte CP-Summen passend zum Profilziel (${targetEcts} CP; CIDA-Doppelanrechnungsverbot beachten; Pflichtmodule vs. Wahlpflicht trennen).
+3. Empfehlungslogik & Workload-Check: Kombiniere formale Vorgaben (Prüfungsordnung) mit praxisnahen Hinweisen zu Arbeitsbelastung (Workload) und Prüfungsformen.
 
-# Guardrails (Halluzinations- & Datenschutz-Regeln)
+# Guardrails (Halluzinations-, Workload- & Datenschutz-Regeln)
 - Keine Erfindungen: Wenn Informationen (z. B. aktuelle Raumnummern, exakte Vorlesungs-/Übungszeiten oder unbestätigte Prüfungstermine) nicht im Context stehen, sage dies transparent und verweise auf das offizielle Campus-Portal (z. B. eCampus).
 - Kritische Prüfung: Wenn der Nutzer widersprüchliche Wünsche äußert (z. B. zu viele CPs, doppelte Anrechnung zwischen CIDA und Informatik-WP oder zeitgleiche Kurse), weise freundlich auf den Konflikt hin und schlage eine realistische Alternative vor.
+- **Workload- & Anti-Sycophancy-Check:** Wenn der Nutzer laut \`<user_profile>\` eine hohe Werkstudententätigkeit hat (z. B. 15–20 Std./Woche), aber gleichzeitig 30+ ECTS (oder im aktuellen Plan bereits sehr hohe CP / viele prüfungsintensive bzw. als aufwändig bekannte Module) anstrebt oder wählt, weise freundlich aber bestimmt auf das konkrete Überlastungsrisiko hin (da 30 CP ≈ 900 Std./Semester + Nebenjob) und schlage proaktiv eine realistischere Alternative vor (z. B. Reduktion auf ~24 ECTS bzw. einen ausgewogeneren Mix aus Klausur- und Seminarmodulen).
+- **Fallback bei leerem Profil:** Falls \`profileConfigured\` in \`<user_profile>\` \`false\` ist (noch kein Profil ausgefüllt), frage bei allgemeinen Planungsanfragen gezielt nach Bachelor-Hintergrund, gewünschtem Master-Profil (DITraM, UCeDI, CIDA) und zeitlicher Verfügbarkeit (Nebenjob / gewünschter ECTS-Workload) — und weise optional kurz darauf hin, dass das Profil oben rechts über „Mein Profil“ gespeichert werden kann.
 
 # Output Format
 - Antworte klar strukturiert, freundlich und auf Deutsch.
@@ -188,6 +206,7 @@ async function startServer() {
       customModules?: DitModule[];
       moduleOverrides?: Record<string, Partial<DitModule>>;
       activeSemester?: SemesterId;
+      userProfile?: UserProfile | null;
     };
 
     const messages = Array.isArray(body?.messages) ? body.messages : [];
@@ -217,13 +236,15 @@ async function startServer() {
         : {};
     const activeSemester: SemesterId =
       body?.activeSemester === "sose27" ? "sose27" : "wise2627";
+    const userProfile = sanitizeUserProfile(body?.userProfile);
 
     const systemInstruction = buildSystemInstruction(
       selectedModuleIds,
       completedMakeupIds,
       activeSemester,
       customModules,
-      moduleOverrides
+      moduleOverrides,
+      userProfile
     );
 
     const rawMessages = messages
